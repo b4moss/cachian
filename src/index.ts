@@ -1,4 +1,5 @@
 export type {
+  AbsoluteTime,
   Cache,
   CacheEntry,
   CachePurgeOlderThan,

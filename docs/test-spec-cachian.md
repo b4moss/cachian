@@ -22,12 +22,13 @@
 
 | 用語 | 意味 |
 |------|------|
-| Cache | `createCache()` が返すオブジェクト（`get` / `set` / `remove` / `has` / `clear` / `purge`） |
+| Cache | `createCache()` が返すオブジェクト（`get` / `set` / `update` / `upsert` / `remove` / `has` / `clear` / `purge`） |
 | バックエンド | `storage: "localStorage"` または `"indexedDB"` |
 | エントリ | ストレージに保存する単位。`{ expiresAt: number, data: unknown, createdAt?: number }` |
 | `expiresAt` | 期限切れ判定用のエポックミリ秒。`Date.now() >= expiresAt` なら期限切れ |
-| `createdAt` | 書き込み時刻のエポックミリ秒。`purge({ olderThan })` の年齢判定に使う。新規 `set` では必須付与 |
+| `createdAt` | 書き込み時刻のエポックミリ秒。`purge({ olderThan })` および絶対時刻パージの年齢判定に使う。新規 `set` / `upsert`（miss 時）では必須付与。`update` / `upsert`（hit 時）では維持 |
 | TTL | Time To Live（秒）。`set` 時に `expiresAt = Date.now() + ttlSeconds * 1000` |
+| 絶対時刻 | `purge` の `createdBefore` / `createdAfter` に渡す時刻。ISO 8601 文字列、またはエポック秒／ミリ秒の数値（§3.5.3） |
 | 論理キー | 呼び出し側が渡す `key` 文字列 |
 | 物理キー | 実際にストレージへ書くキー。`keyPrefix` がある場合は `keyPrefix + 論理キー` |
 | miss | `get` が `null` を返すこと（未保存・期限切れ・壊れたエントリ・無効化・操作時のストレージ失敗） |
@@ -101,13 +102,17 @@ SSR（Next.js 等）では import はサーバーでも通る想定。`createCac
 | メソッド | 戻り値 | 概要 |
 |----------|--------|------|
 | `get(key)` | `Promise<unknown \| null>` | 有効エントリの `data`。miss は `null` |
-| `set(key, data, options?)` | `Promise<void>` | エントリを保存。`options.ttlSeconds` はインスタンス既定を上書き可。新規書き込みは `createdAt` を付与 |
+| `set(key, data, options?)` | `Promise<void>` | **常に**新規エントリとして保存（`createdAt` / `expiresAt` を再生成）。既存の有無は問わない |
+| `update(key, data, options?)` | `Promise<void>` | 有効な既存エントリがあるときだけ `data` を更新（§3.6）。無ければ / 期限切れなら no-op |
+| `upsert(key, data, options?)` | `Promise<void>` | 有効エントリがあれば `update`、無ければ `set`（§3.6） |
 | `remove(key)` | `Promise<void>` | 当該物理キーを削除。無ければ no-op |
 | `has(key)` | `Promise<boolean>` | 有効エントリがあれば `true`（期限切れは削除して `false`） |
 | `clear()` | `Promise<void>` | 本インスタンスが管理する範囲のみ削除（§5.5） |
 | `purge(options)` | `Promise<void>` | モード選択によるパージ（§3.5 / §5.8）。既存 `clear` / `remove` は互換のため残す |
 
-`set` の `options.ttlSeconds` が不正な場合は **`TypeError`**（ストレージへ書かない）。
+`set` / `update` / `upsert` の `options.ttlSeconds` が不正な場合は **`TypeError`**（ストレージへ書かない）。
+
+`set` / `update` / `upsert` はいずれも `CacheSetOptions`（`{ ttlSeconds?: number }`）を受け取る。
 
 ### 3.4 エントリ形式
 
@@ -115,22 +120,25 @@ SSR（Next.js 等）では import はサーバーでも通る想定。`createCac
 type CacheEntry = {
   expiresAt: number;
   data: unknown;
-  /** 書き込み時刻（エポック ms）。新規 `set` では必ず付与。旧データ互換で optional */
+  /** 書き込み時刻（エポック ms）。新規 `set` / miss 時 `upsert` では必ず付与。旧データ互換で optional */
   createdAt?: number;
 };
 ```
 
 - 型ガード: `value` が非 null オブジェクトで、`expiresAt` が `number` かつ `"data" in value`（`createdAt` は必須としない）
-- 新規 `set`: `createdAt = Date.now()` を必ず含める
+- 新規 `set`（および miss 時の `upsert`）: `createdAt = Date.now()` を必ず含める
+- `update`（および hit 時の `upsert`）: 既存の `createdAt` を維持する（無ければ付与しない）
 - localStorage: `JSON.stringify(entry)` を文字列として保存
 - IndexedDB: エントリオブジェクトを structured clone で保存（stringify 不要）
 - `get` は呼び出し側に `data` のみ返す（`expiresAt` / `createdAt` は返さない）
 
 ### 3.5 `purge(options)` — パージ API
 
-呼び出し側が次の **いずれか 1 モード**を選ぶ（判別共用体）。複数モードを同時に指定する形は本仕様の対象外（実装は TypeScript の判別共用体で排他する）。
+呼び出し側が次の **いずれか 1 モード**を選ぶ（判別共用体）。複数モードを同時に指定する形は本仕様の対象外（実装は TypeScript の判別共用体で排他する）。相対時刻（`olderThan`）と絶対時刻（`createdBefore` / `createdAfter`）の混在は **実行時に `TypeError`**（§3.5.4）。
 
 ```ts
+type AbsoluteTime = string | number;
+
 type CachePurgeOlderThan = {
   years?: number;
   months?: number;
@@ -142,7 +150,9 @@ type CachePurgeOlderThan = {
 type CachePurgeOptions =
   | { all: true }
   | { keys: string[] }
-  | { olderThan: CachePurgeOlderThan };
+  | { olderThan: CachePurgeOlderThan }
+  | { createdBefore: AbsoluteTime; createdAfter?: AbsoluteTime }
+  | { createdAfter: AbsoluteTime; createdBefore?: AbsoluteTime };
 ```
 
 | モード | オプション | 振る舞い |
@@ -150,8 +160,11 @@ type CachePurgeOptions =
 | すべてパージ | `{ all: true }` | `clear()` と同一の削除範囲（§5.5） |
 | キー指定 | `{ keys: string[] }` | 論理キー配列の各要素を `remove` 相当で削除。空配列は no-op。存在しないキーは no-op |
 | 経過時間 | `{ olderThan: CachePurgeOlderThan }` | 指定期間より **古い** エントリのみ削除（§5.8.3） |
+| 絶対時刻（以前） | `{ createdBefore: AbsoluteTime }` | `createdAt < threshold` のエントリのみ削除（§5.8.4） |
+| 絶対時刻（以後） | `{ createdAfter: AbsoluteTime }` | `createdAt > threshold` のエントリのみ削除（§5.8.4） |
+| 絶対時刻（範囲） | `{ createdBefore, createdAfter }` | 両方の条件を満たすエントリのみ削除（§5.8.4） |
 
-公開型 `CachePurgeOptions` / `CachePurgeOlderThan` はパッケージから export する。
+公開型 `CachePurgeOptions` / `CachePurgeOlderThan` / `AbsoluteTime` はパッケージから export する。
 
 #### 3.5.1 `olderThan` の期間換算
 
@@ -180,7 +193,7 @@ durationMs =
 
 省略された単位は `0` として扱う。複数単位は加算する（例: `{ hours: 1, mins: 30 }` → 90 分）。
 
-#### 3.5.2 年齢判定
+#### 3.5.2 年齢判定（`olderThan`）
 
 `now = Date.now()` として、エントリを削除する条件:
 
@@ -193,6 +206,68 @@ createdAt != null && createdAt <= now - durationMs
 - 期限切れ（`expiresAt`）とは独立。期限切れでも `createdAt` が新しければ残るし、有効でも古ければ消える
 - 戻り値は常に `Promise<void>`（削除件数は返さない）
 
+#### 3.5.3 絶対時刻のパース（`AbsoluteTime`）
+
+`createdBefore` / `createdAfter` の値は次のいずれか。内部ではすべて **エポックミリ秒**に正規化する。
+
+| 入力 | 解釈 |
+|------|------|
+| `string` | ISO 8601（例: `2024-01-01T00:00:00Z`、`2024-01-01T00:00:00.123Z`、オフセット付きも可）。`Date.parse` 相当でパース。ミリ秒（小数秒）付きも正しく解釈する |
+| `number`（有限） | エポック時刻。**秒とミリ秒を自動判定**: 絶対値が `1e12` 未満なら秒とみなし `* 1000`、それ以外はミリ秒としてそのまま使う（負の時刻も同様に絶対値で判定） |
+
+不正な入力は **`TypeError`**（メッセージに `createdBefore` / `createdAfter` / `AbsoluteTime` / `ISO` のいずれかを含むこと）。ストレージは変更しない。
+
+不正の例:
+
+- 空文字・パース不能な文字列（例: `"not-a-date"`）
+- `NaN` / `Infinity` / `-Infinity`
+- `string` / `number` 以外（実装が受けた場合。TypeScript では型で除外）
+
+#### 3.5.4 相対時刻と絶対時刻の混在
+
+次のようなオブジェクトを実行時に受け取った場合（型アサーション等で判別共用体を迂回した場合を含む）は **`TypeError`**。ストレージは変更しない。
+
+- `olderThan` と `createdBefore` の同時指定
+- `olderThan` と `createdAfter` の同時指定
+- `olderThan` と両方の絶対時刻の同時指定
+
+エラーメッセージに `olderThan` および `createdBefore` または `createdAfter` を含むこと。
+
+`createdBefore` と `createdAfter` の同時指定は **混在エラーではない**（範囲削除として許可）。
+
+#### 3.5.5 絶対時刻の削除判定
+
+`createdBefore` / `createdAfter` をそれぞれパースして得た閾値を `beforeMs` / `afterMs` とする。
+
+```
+createdAt != null
+  && (beforeMs === undefined || createdAt < beforeMs)
+  && (afterMs === undefined || createdAt > afterMs)
+```
+
+- `createdAt` が無い旧形式エントリは **削除しない**（`olderThan` と同様）
+- 境界は **厳密不等号**（`createdAt === beforeMs` や `createdAt === afterMs` のエントリは残す）
+- `createdBefore` のみ / `createdAfter` のみ / 両方、のいずれでもよい。両方とも欠ける単独モードは型上あり得ない（少なくとも一方が必須）
+- 期限切れ（`expiresAt`）とは独立
+- 戻り値は常に `Promise<void>`
+
+### 3.6 `set` / `update` / `upsert` の書き込み契約
+
+3 メソッドは意図的に挙動を分ける。
+
+| メソッド | キーが miss（未保存・期限切れ・壊れて掃除後） | キーが有効 hit |
+|----------|-----------------------------------------------|----------------|
+| `set` | 新規エントリを書く（`createdAt` / `expiresAt` を `Date.now()` 基準で生成） | **上書き**して新規エントリを書く（`createdAt` / `expiresAt` を再生成） |
+| `update` | **no-op**（ストレージ変更なし。reject しない） | `data` を更新。`createdAt` は維持。`options.ttlSeconds` 未指定なら `expiresAt` も維持。指定時は `expiresAt = Date.now() + ttlMs` |
+| `upsert` | `set` と同一 | `update` と同一 |
+
+補足:
+
+- 期限切れエントリに対する `update` は、`get` / `has` と同様に期限切れを検知して削除してよいが、**新しいエントリは書かない**（結果として miss のまま = no-op）
+- 壊れたエントリに対する `update` も掃除して no-op でよい
+- `update` / `upsert` で既存 `createdAt` が無い正当エントリを更新する場合、`createdAt` は付与せず維持（undefined のまま）
+- `enabled: false` のとき 3 メソッドとも no-op（§5.4）
+- ストレージ書き込み失敗は `set` と同様に握りつぶす（§5.6）
 ## 4. テスト方針
 
 実装先の目安:
@@ -208,6 +283,8 @@ createdAt != null && createdAt <= now - durationMs
 - 実ブラウザ・実ディスクへの依存なし（CI で決定的に通ること）
 - 時刻依存ケースは `vi.useFakeTimers()` / `Date.now` 固定、または書き込み直後の範囲アサーションでよい
 - `purge({ olderThan })` は fake timers で年齢差を作る（TC-C19）
+- 絶対時刻パージは固定の `createdAt` をストレージへ直接配置するか、fake timers でよい（TC-C27〜）
+- `AbsoluteTime` のパースは文字列・秒・ミリ秒の代表値を固定ケースで検証（TC-C29）
 
 対象外（本仕様では必須としない）:
 
@@ -216,6 +293,8 @@ createdAt != null && createdAt <= now - durationMs
 - Quota を実際に満杯にする結合テスト（stub で `setItem` が throw すれば足りる）
 - `purge` の削除件数の戻り値や進捗コールバック
 - カレンダー月／うるう年に基づく期間換算（固定換算のみ）
+- ISO 8601 の全亜種（週番号日付・ordinal date 等）。`Date.parse` が受け付ける一般的な暦日付＋時刻で足りる
+- `update` が「存在しないキーで throw する」契約（本仕様は no-op）
 
 ## 5. 振る舞い共通契約
 
@@ -243,7 +322,7 @@ createdAt != null && createdAt <= now - durationMs
 
 - `get` → 常に `null`（既存エントリがあっても読まない・消さない）
 - `has` → 常に `false`
-- `set` / `remove` / `clear` / `purge` → no-op（ストレージを変更しない）
+- `set` / `update` / `upsert` / `remove` / `clear` / `purge` → no-op（ストレージを変更しない）
 - `purge` のオプションが不正な場合でも、`enabled: false` なら **バリデーションより先に no-op してよい**（実装都合）。ただし `enabled: true` では不正オプションは必ず `TypeError`
 
 ### 5.5 `clear` の範囲
@@ -280,7 +359,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 - 物理キー = `keyPrefix + key`（単純連結。セパレータは呼び出し側が prefix に含めてよい）
 - 異なる prefix のインスタンスは互いに見えない
-- `purge({ olderThan })` の列挙も **自インスタンスの `keyPrefix` 配下のみ**（localStorage）。IndexedDB は store 全件を見て prefix で絞る実装でよい
+- `purge({ olderThan })` / 絶対時刻パージの列挙も **自インスタンスの `keyPrefix` 配下のみ**（localStorage）。IndexedDB は store 全件を見て prefix で絞る実装でよい
 
 ### 5.8 `purge` の共通契約
 
@@ -306,6 +385,14 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - `createdAt` 無しの正当なエントリは **残す**
 - `createdAt` が閾値より新しいエントリは **残す**
 - 削除対象のみ `remove` 相当
+
+#### 5.8.4 `{ createdBefore }` / `{ createdAfter }`
+
+- パース・判定は §3.5.3 / §3.5.5
+- 列挙対象・壊れたエントリの扱いは §5.8.3 と同じ
+- `createdAt` 無しの正当なエントリは **残す**
+- 境界ちょうど（`===`）のエントリは **残す**
+- `olderThan` との混在は §3.5.4 のとおり `TypeError`
 
 ## 6. コアケース（TC-C）— バックエンド非依存
 
@@ -374,9 +461,9 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 ### TC-C10: `enabled: false`
 
 - **前提**: 事前に別インスタンス（`enabled: true`）で `"k"` を保存済みでもよい
-- **操作**: `createCache({ enabled: false })` で `get` / `set` / `remove` / `has` / `clear` / `purge`
+- **操作**: `createCache({ enabled: false })` で `get` / `set` / `update` / `upsert` / `remove` / `has` / `clear` / `purge`
 - **期待**: `get` → `null`、`has` → `false`
-- **期待**: `set` / `remove` / `clear` / `purge({ all: true })` / `purge({ keys: ["k"] })` / `purge({ olderThan: { seconds: 0 } })` 後も、既存ストレージ内容が変わらない（事前データがあれば残る）
+- **期待**: `set` / `update` / `upsert` / `remove` / `clear` / `purge({ all: true })` / `purge({ keys: ["k"] })` / `purge({ olderThan: { seconds: 0 } })` / `purge({ createdBefore: "2099-01-01T00:00:00.000Z" })` 後も、既存ストレージ内容が変わらない（事前データがあれば残る）
 
 ### TC-C11: `remove`
 
@@ -502,6 +589,12 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **操作**: `app` 側で `purge({ olderThan: { seconds: 0 } })`
 - **期待**: `"app:"` 配下の対象のみ削除。他 prefix / 無 prefix のキーは残る
 
+### TC-LS05: 絶対時刻パージが他 prefix を消さない
+
+- **前提**: TC-LS04 と同様に prefix 隔離されたエントリ（いずれも閾値より前の `createdAt`）
+- **操作**: `app` 側で `purge({ createdBefore: "2099-01-01T00:00:00.000Z" })`
+- **期待**: `"app:"` 配下の対象のみ削除。他 prefix / 無 prefix のキーは残る
+
 ## 8. IndexedDB 固有（TC-IDB）
 
 ### TC-IDB01: `storage: "indexedDB"` で hit/miss
@@ -546,6 +639,12 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - TC-C19（`purge` olderThan）
 - TC-C20（`createdAt` 無しは残す）
 - TC-C21（不正 `olderThan`）
+- TC-C22（`update` が `createdAt` を維持）
+- TC-C25（`upsert` miss→set / hit→update）
+- TC-C27（`createdBefore`）
+- TC-C28（`createdAfter` / 範囲）
+- TC-C30（絶対時刻で legacy 残す）
+- TC-C31（相対と絶対の混在エラー）
 
 ## 9. 公開面・パッケージ（TC-P）
 
@@ -577,7 +676,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 | localStorage のみ | + `storage: "indexedDB"` |
 | 同期 API | 非同期 API |
 | URL キー前提のコメント | 任意文字列キー |
-| （なし） | `cache.purge({ all \| keys \| olderThan })` |
+| （なし） | `cache.purge({ all \| keys \| olderThan \| createdBefore \| createdAfter })` |
 | （なし） | エントリの `createdAt`（新規書き込み） |
 | （なし・握りつぶし） | 環境非対応時は `CachianEnvironmentError`（生成時。#18） |
 
