@@ -9,7 +9,7 @@
 
 [日本語](./README_ja.md)
 
-Universal browser cache helper with **localStorage** (default) and **IndexedDB** backends, TTL, and a small async API.
+Universal **browser-only** cache helper with **localStorage** (default) and **IndexedDB** backends, TTL, and a small async API.
 
 Extracted and generalized from the cache logic in [`@b4moss/jp-local-gov-id`](https://github.com/b4moss/jp-local-gov-id).
 
@@ -31,6 +31,8 @@ const cache = createCache(); // localStorage by default
 await cache.set("https://example.com/data.json", { hello: "world" });
 const data = await cache.get("https://example.com/data.json");
 ```
+
+Browser only: `createCache()` throws `CachianEnvironmentError` when the chosen backend API (`localStorage` / `indexedDB`) is unavailable (e.g. Node / SSR). Importing the module alone is safe — call `createCache()` only in the browser (or guard with `typeof window !== "undefined"`).
 
 ### IndexedDB
 
@@ -55,6 +57,16 @@ const cache = createCache({
 
 Entry shape in storage: `{ expiresAt: number, data: unknown, createdAt?: number }` (localStorage stores JSON strings; IndexedDB stores objects). New writes always include `createdAt`.
 
+### Writes: `set` / `update` / `upsert`
+
+```ts
+await cache.set("k", value); // always writes a new entry (resets createdAt / expiresAt)
+await cache.update("k", value); // updates only if a valid entry exists; otherwise no-op
+await cache.upsert("k", value); // set on miss, update on hit
+```
+
+`update` / hit-path `upsert` keep `createdAt`. Without `ttlSeconds`, they also keep `expiresAt`.
+
 ### Purge
 
 ```ts
@@ -66,9 +78,17 @@ await cache.purge({ keys: ["a", "b"] });
 
 // Remove entries older than the given age (fixed: year=365d, month=30d)
 await cache.purge({ olderThan: { hours: 1, mins: 30 } });
+
+// Absolute time (ISO 8601, or epoch seconds/ms number)
+await cache.purge({ createdBefore: "2024-06-01T00:00:00.000Z" });
+await cache.purge({ createdAfter: 1_700_000_000_000 });
+await cache.purge({
+  createdAfter: "2024-01-01T00:00:00.000Z",
+  createdBefore: "2024-12-01T00:00:00.000Z",
+});
 ```
 
-Legacy entries without `createdAt` are left alone by `olderThan` (use `all` or `keys` to remove them).
+Legacy entries without `createdAt` are left alone by `olderThan` and absolute-time modes (use `all` or `keys` to remove them). Mixing `olderThan` with `createdBefore` / `createdAfter` throws `TypeError`.
 
 ## License
 

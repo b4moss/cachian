@@ -1,8 +1,12 @@
 # Publish @b4moss/cachian to npm when a GitHub Release is published for v*.
-# Auth: npm Trusted Publishing (OIDC) — configure GitHub org/repo/workflow on
-# npmjs.com; do not use an NPM_TOKEN secret.
-# Tags should be created from the `release` branch. If the tag SHA already has a
-# successful CI run, Test/Build are skipped; pack + provenance publish always run.
+# Auth: npm Trusted Publishing (OIDC) — on npmjs.com → package → Trusted Publisher:
+#   Organization: b4moss
+#   Repository:   cachian
+#   Workflow:     publish.yml   ← filename only (not the workflow display name)
+#   Environment:  (leave empty — this workflow does not use environments)
+# Do not use an NPM_TOKEN secret.
+# Tags should be created from `main`. If the tag SHA already has a successful CI
+# run, Test/Build are skipped; provenance publish always runs.
 name: Publish
 
 on:
@@ -34,6 +38,12 @@ jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
+    # Job-level OIDC permission (belt-and-suspenders with workflow-level).
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+      checks: read
     if: >
       (github.event_name == 'workflow_dispatch') ||
       (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v'))
@@ -67,22 +77,21 @@ jobs:
           ref: refs/tags/${{ steps.meta.outputs.tag }}
           fetch-depth: 0
 
-      - name: Require tag commit on release ancestry
+      - name: Require tag commit on main ancestry
         id: ancestry
         run: |
           set -euo pipefail
-          if ! git fetch origin release:refs/remotes/origin/release; then
-            echo "Could not fetch origin/release."
-            echo "Create a release branch before tagging v* for publish."
+          if ! git fetch origin main:refs/remotes/origin/main; then
+            echo "Could not fetch origin/main."
             exit 1
           fi
           TAG_SHA="$(git rev-parse HEAD)"
-          if ! git merge-base --is-ancestor "$TAG_SHA" origin/release; then
-            echo "Tag commit $TAG_SHA is not an ancestor of origin/release."
-            echo "Create v* tags from the release branch."
+          if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+            echo "Tag commit $TAG_SHA is not an ancestor of origin/main."
+            echo "Create v* tags from the main branch."
             exit 1
           fi
-          echo "Tag commit is on release ancestry: $TAG_SHA"
+          echo "Tag commit is on main ancestry: $TAG_SHA"
           echo "sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Check CI success history for tag SHA
@@ -123,7 +132,8 @@ jobs:
           cache: npm
 
       - name: Ensure npm supports Trusted Publishing
-        run: npm install -g npm@^11.5.1
+        # Trusted Publishing needs npm >= 11.5.1 (Node 24 may ship older).
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
@@ -136,50 +146,31 @@ jobs:
         if: steps.ci_history.outputs.skip_verify != 'true'
         run: npm run build
 
-      - name: Pack
-        id: pack
+      - name: Ensure dist exists
         run: |
           set -euo pipefail
-          # Ensure dist exists even when Test/Build were skipped
           if [ ! -d dist ]; then
             npm run build
           fi
-          TARBALL="$(npm pack --json | jq -r '.[0].filename')"
-          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
-          echo "Packed: $TARBALL"
 
-      - name: Inject repository.url into packed tarball
-        env:
-          TARBALL: ${{ steps.pack.outputs.tarball }}
-          REPO_URL: https://github.com/${{ github.repository }}
+      - name: Verify OIDC is available
         run: |
           set -euo pipefail
-          TMPDIR="$(mktemp -d)"
-          tar -xzf "$TARBALL" -C "$TMPDIR"
-          node -e '
-            const fs = require("fs");
-            const path = require("path");
-            const pkgPath = path.join(process.argv[1], "package", "package.json");
-            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-            const url = process.argv[2];
-            if (typeof pkg.repository === "string") {
-              pkg.repository = { type: "git", url };
-            } else {
-              pkg.repository = { ...(pkg.repository || {}), type: "git", url };
-            }
-            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-          ' "$TMPDIR" "$REPO_URL"
-          tar -czf "$TARBALL" -C "$TMPDIR" package
-          rm -rf "$TMPDIR"
-          echo "Injected repository.url=$REPO_URL into $TARBALL"
+          echo "node=$(node -v) npm=$(npm -v)"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "ACTIONS_ID_TOKEN_REQUEST_URL is missing."
+            echo "id-token: write permission is not effective — OIDC cannot run."
+            exit 1
+          fi
+          echo "OIDC request URL is present (token exchange can proceed)."
 
       - name: Publish to npm (Trusted Publishing / OIDC)
-        env:
-          TARBALL: ${{ steps.pack.outputs.tarball }}
         run: |
           set -euo pipefail
           # No NPM_TOKEN / NODE_AUTH_TOKEN — auth is OIDC Trusted Publishing
-          # configured on npmjs.com (GitHub org + repo + this workflow filename).
+          # configured on npmjs.com (GitHub org + repo + workflow filename publish.yml).
+          # Publish from the package directory (same pattern as @b4moss/shardian),
+          # not from a packed tarball — tarball publish can skip the OIDC path.
           version="$(node -p "require('./package.json').version")"
           args=(--access public --provenance)
           # npm requires a non-latest dist-tag for prerelease versions (e.g. 1.0.0-rc.1)
@@ -187,4 +178,4 @@ jobs:
             args+=(--tag rc)
             echo "prerelease detected (${version}); using --tag rc"
           fi
-          npm publish "${args[@]}" "$TARBALL"
+          npm publish "${args[@]}"
