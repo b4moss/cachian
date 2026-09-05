@@ -9,7 +9,7 @@
 
 [日本語](./README_ja.md)
 
-Universal browser cache helper with **localStorage** (default) and **IndexedDB** backends, TTL, and a small async API.
+Universal **browser-only** cache helper with **localStorage** (default) and **IndexedDB** backends, TTL, and a small async API.
 
 Extracted and generalized from the cache logic in [`@b4moss/jp-local-gov-id`](https://github.com/b4moss/jp-local-gov-id).
 
@@ -31,6 +31,8 @@ const cache = createCache(); // localStorage by default
 await cache.set("https://example.com/data.json", { hello: "world" });
 const data = await cache.get("https://example.com/data.json");
 ```
+
+Browser only: `createCache()` throws `CachianEnvironmentError` when the chosen backend API (`localStorage` / `indexedDB`) is unavailable (e.g. Node / SSR). Importing the module alone is safe — call `createCache()` only in the browser (or guard with `typeof window !== "undefined"`).
 
 ### IndexedDB
 

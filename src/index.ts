@@ -11,4 +11,5 @@ export {
   CACHE_TTL_MS,
   DEFAULT_CACHE_TTL_SECONDS,
 } from "./types";
+export { CachianEnvironmentError } from "./environment";
 export { createCache } from "./createCache";

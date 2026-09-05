@@ -1,3 +1,4 @@
+import { assertStorageAvailable } from "./environment";
 import { isExpired, makeEntry, resolveOlderThanMs, resolveTtlMs } from "./entry";
 import { createIndexedDBAdapter } from "./storage/indexedDB";
 import { createLocalStorageAdapter } from "./storage/localStorage";
@@ -22,6 +23,7 @@ function resolveAdapter(options: CreateCacheOptions): StorageAdapter {
 export function createCache(options: CreateCacheOptions = {}): Cache {
   // Validate instance TTL up front (even if later overridden per set).
   resolveTtlMs(options.ttlSeconds);
+  assertStorageAvailable(options.storage ?? "localStorage");
 
   const enabled = options.enabled !== false;
   const keyPrefix = options.keyPrefix ?? "";
