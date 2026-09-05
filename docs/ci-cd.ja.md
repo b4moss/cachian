@@ -97,7 +97,7 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 | 祖先チェック | タグのコミットが `origin/main` の祖先であること |
 | 検証スキップ | その SHA に CI success があれば Test/Build 省略。pack + provenance publish は常に実行 |
 | dist-tag | プレリリース（`*-rc.*` 等）は `--tag rc`、それ以外は `latest` |
-| 認証 | npm **Trusted Publishing**（OIDC）。npmjs.com → パッケージ → Trusted Publisher で GitHub org `b4moss`・repo `cachian`・workflow `publish.yml` を指定。`NPM_TOKEN` シークレットは使わない。`id-token: write`、Node 24、npm ≥ 11.5.1 が必要 |
+| 認証 | npm **Trusted Publishing**（OIDC）。npmjs.com → パッケージ → Trusted Publisher で GitHub org `b4moss`・repo `cachian`・workflow `publish.yml` を指定（兄弟リポジトリの `publish-npm.yml` とはファイル名が異なるので注意）。`NPM_TOKEN` シークレットは使わない。`id-token: write`、Node 24、npm ≥ 11.5.1 が必要 |
 
 `v*` タグは **`main` ブランチから**打つ。
 
