@@ -1,6 +1,8 @@
 export type {
   Cache,
   CacheEntry,
+  CachePurgeOlderThan,
+  CachePurgeOptions,
   CacheSetOptions,
   CreateCacheOptions,
   StorageBackend,

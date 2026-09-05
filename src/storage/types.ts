@@ -7,4 +7,8 @@ export type StorageAdapter = {
   remove(physicalKey: string): Promise<void>;
   /** localStorage: delete keys with prefix. indexedDB: clear whole store. */
   clear(keyPrefix: string): Promise<void>;
+  /** List valid entries whose physical keys start with keyPrefix. */
+  list(
+    keyPrefix: string,
+  ): Promise<Array<{ physicalKey: string; entry: CacheEntry }>>;
 };

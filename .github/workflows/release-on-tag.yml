@@ -1,0 +1,53 @@
+# Create a GitHub Release when a v* tag is pushed.
+# Operational rule: create these tags from the `release` branch so Publish
+# (publish.yml) can verify ancestry and reuse CI success for the tag SHA.
+#
+# Tag naming: use semver (optionally with prerelease dots), e.g. v1.0.0 or v1.0.0-rc.1
+name: Release on tag
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release for tag $TAG already exists; skipping create."
+            exit 0
+          fi
+
+          PRERELEASE_ARGS=()
+          # Semver prerelease segment (e.g. v1.0.0-rc.1)
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE_ARGS+=(--prerelease)
+          fi
+
+          NOTES="Automated release for tag \`$TAG\`.
+
+          Create \`v*\` tags from the \`release\` branch so Publish can verify
+          ancestry and reuse a successful CI run for the tag SHA."
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "$NOTES" \
+            "${PRERELEASE_ARGS[@]}"

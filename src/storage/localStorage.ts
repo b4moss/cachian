@@ -1,4 +1,5 @@
 import { isCacheEntry } from "../entry";
+import type { CacheEntry } from "../types";
 import type { StorageAdapter } from "./types";
 
 function getLocalStorage(): Storage | null {
@@ -71,6 +72,42 @@ export function createLocalStorageAdapter(): StorageAdapter {
       } catch {
         // ignore
       }
+    },
+
+    async list(keyPrefix) {
+      const storage = getLocalStorage();
+      if (!storage) return [];
+      const results: Array<{ physicalKey: string; entry: CacheEntry }> = [];
+      try {
+        const keys: string[] = [];
+        for (let i = 0; i < storage.length; i += 1) {
+          const key = storage.key(i);
+          if (key != null && key.startsWith(keyPrefix)) {
+            keys.push(key);
+          }
+        }
+        for (const physicalKey of keys) {
+          try {
+            const raw = storage.getItem(physicalKey);
+            if (raw == null) continue;
+            const parsed: unknown = JSON.parse(raw);
+            if (!isCacheEntry(parsed)) {
+              storage.removeItem(physicalKey);
+              continue;
+            }
+            results.push({ physicalKey, entry: parsed });
+          } catch {
+            try {
+              storage.removeItem(physicalKey);
+            } catch {
+              // ignore
+            }
+          }
+        }
+      } catch {
+        return [];
+      }
+      return results;
     },
   };
 }
