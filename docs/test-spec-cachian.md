@@ -2,7 +2,7 @@
 
 対象マイルストーン: `v0.1.0`（初回公開想定）  
 関連: 実装計画（cachian パッケージ） / 抽出元 `b4moss/jp-local-gov-id` の `packages/jp-local-gov-id/src/cache.ts`  
-作業ブランチ: `cursor/cache-purge-test-spec-12ec`（パージ API 追記）  
+作業ブランチ: `cursor/cache-purge-api-12ec`（パージ API 実装）  
 想定実装: リポジトリルートの単一パッケージ（`src/createCache.ts` ほか）
 
 ## 1. 目的

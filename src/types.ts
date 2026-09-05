@@ -26,15 +26,31 @@ export type CacheSetOptions = {
   ttlSeconds?: number;
 };
 
+export type CachePurgeOlderThan = {
+  years?: number;
+  months?: number;
+  hours?: number;
+  mins?: number;
+  seconds?: number;
+};
+
+export type CachePurgeOptions =
+  | { all: true }
+  | { keys: string[] }
+  | { olderThan: CachePurgeOlderThan };
+
 export type Cache = {
   get(key: string): Promise<unknown | null>;
   set(key: string, data: unknown, options?: CacheSetOptions): Promise<void>;
   remove(key: string): Promise<void>;
   has(key: string): Promise<boolean>;
   clear(): Promise<void>;
+  purge(options: CachePurgeOptions): Promise<void>;
 };
 
 export type CacheEntry = {
   expiresAt: number;
   data: unknown;
+  /** Write time (epoch ms). Always set on new `set`. Optional for legacy entries. */
+  createdAt?: number;
 };

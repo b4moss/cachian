@@ -53,7 +53,22 @@ const cache = createCache({
 | `dbName` | `"cachian"` | IndexedDB の DB 名 |
 | `storeName` | `"entries"` | IndexedDB の object store 名 |
 
-保存形式は `{ expiresAt: number, data: unknown }`（localStorage は JSON 文字列、IndexedDB はオブジェクト）。
+保存形式は `{ expiresAt: number, data: unknown, createdAt?: number }`（localStorage は JSON 文字列、IndexedDB はオブジェクト）。新規 `set` では必ず `createdAt` を付与します。
+
+### パージ
+
+```ts
+// このインスタンスが管理する範囲をすべて削除
+await cache.purge({ all: true });
+
+// 指定した論理キーだけ削除
+await cache.purge({ keys: ["a", "b"] });
+
+// 指定期間より古いエントリだけ削除（固定換算: year=365日, month=30日）
+await cache.purge({ olderThan: { hours: 1, mins: 30 } });
+```
+
+`createdAt` の無い旧エントリは `olderThan` では残ります（消す場合は `all` または `keys` を使います）。
 
 ## ライセンス
 
