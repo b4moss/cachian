@@ -1,6 +1,6 @@
 {
   "name": "@b4moss/cachian",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Universal browser cache helper with localStorage and IndexedDB backends",
   "type": "module",
   "main": "./dist/cachian.cjs",
@@ -24,7 +24,9 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "node ./scripts/build.mjs",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "ci:local": "act pull_request -W .github/workflows/ci.yml",
+    "ci:local:fallback": "npm ci && npm test && npm run build"
   },
   "keywords": [
     "cache",
@@ -48,7 +50,7 @@
   "devDependencies": {
     "@vitest/coverage-v8": "^4",
     "fake-indexeddb": "^6.2.5",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vite-plugin-dts": "^5.0.3",
     "vitest": "^4.1.10"

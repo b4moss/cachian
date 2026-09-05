@@ -1,0 +1,177 @@
+# CI — PRs targeting develop or dev-* only.
+# Local pre-PR gate: npm run ci:local (nektos/act). See docs/ci-cd.md.
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - "dev-*"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      skip_heavy: ${{ steps.decide.outputs.skip_heavy }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - name: Decide skip / docs-only / full
+        id: decide
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const isAct = process.env.ACT === 'true';
+            if (isAct) {
+              core.setOutput('skip_heavy', 'false');
+              core.setOutput('reason', 'act');
+              core.info('ACT=true: always run heavy jobs');
+              return;
+            }
+
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setOutput('skip_heavy', 'false');
+              core.setOutput('reason', 'no-pr');
+              return;
+            }
+
+            const sha = pr.head.sha;
+            const base = context.repo;
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner: base.owner,
+              repo: base.repo,
+              workflow_id: 'ci.yml',
+              head_sha: sha,
+              status: 'completed',
+              per_page: 30,
+            });
+            const priorSuccess = (runs.workflow_runs || []).some(
+              (r) => r.conclusion === 'success' && String(r.id) !== String(context.runId),
+            );
+            if (priorSuccess) {
+              core.setOutput('skip_heavy', 'true');
+              core.setOutput('reason', 'sha-already-green');
+              core.info(`Skip heavy jobs: CI already succeeded for ${sha}`);
+              return;
+            }
+
+            // Docs-only path filter via compare API
+            const { data: comp } = await github.rest.repos.compareCommits({
+              owner: base.owner,
+              repo: base.repo,
+              base: pr.base.sha,
+              head: sha,
+            });
+            const files = comp.files || [];
+            const isDocsOnly =
+              files.length > 0 &&
+              files.every((f) => {
+                const p = f.filename;
+                return (
+                  p.startsWith('docs/') ||
+                  p.endsWith('.md') ||
+                  p === 'LICENSE' ||
+                  (p.startsWith('.github/') && p.endsWith('.md'))
+                );
+              });
+            if (isDocsOnly) {
+              core.setOutput('skip_heavy', 'true');
+              core.setOutput('reason', 'docs-only');
+              core.info('Skip heavy jobs: docs-only change set');
+              return;
+            }
+
+            core.setOutput('skip_heavy', 'false');
+            core.setOutput('reason', 'full');
+
+  test:
+    name: Test
+    needs: gate
+    if: needs.gate.outputs.skip_heavy != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test with coverage
+        run: npm test
+
+      - name: Upload coverage to Codecov
+        if: ${{ !env.ACT }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+
+  build:
+    name: Build
+    needs: gate
+    if: needs.gate.outputs.skip_heavy != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+  # Keeps branch-protection check name "Test & Build" stable.
+  result:
+    name: Test & Build
+    needs: [gate, test, build]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Aggregate
+        run: |
+          set -euo pipefail
+          skip='${{ needs.gate.outputs.skip_heavy }}'
+          reason='${{ needs.gate.outputs.reason }}'
+          test_result='${{ needs.test.result }}'
+          build_result='${{ needs.build.result }}'
+          echo "skip_heavy=${skip} reason=${reason}"
+          echo "test=${test_result} build=${build_result}"
+          if [ "${skip}" = "true" ]; then
+            echo "Heavy jobs skipped (${reason}); treating as success."
+            exit 0
+          fi
+          if [ "${test_result}" = "success" ] && [ "${build_result}" = "success" ]; then
+            exit 0
+          fi
+          echo "::error::Test and/or Build did not succeed"
+          exit 1
