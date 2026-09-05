@@ -53,7 +53,22 @@ const cache = createCache({
 | `dbName` | `"cachian"` | IndexedDB database name |
 | `storeName` | `"entries"` | IndexedDB object store name |
 
-Entry shape in storage: `{ expiresAt: number, data: unknown }` (localStorage stores JSON strings; IndexedDB stores objects).
+Entry shape in storage: `{ expiresAt: number, data: unknown, createdAt?: number }` (localStorage stores JSON strings; IndexedDB stores objects). New writes always include `createdAt`.
+
+### Purge
+
+```ts
+// Remove everything managed by this instance
+await cache.purge({ all: true });
+
+// Remove specific logical keys
+await cache.purge({ keys: ["a", "b"] });
+
+// Remove entries older than the given age (fixed: year=365d, month=30d)
+await cache.purge({ olderThan: { hours: 1, mins: 30 } });
+```
+
+Legacy entries without `createdAt` are left alone by `olderThan` (use `all` or `keys` to remove them).
 
 ## License
 

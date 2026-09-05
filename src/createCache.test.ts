@@ -62,6 +62,31 @@ async function readIdbEntry(
   }
 }
 
+async function putIdbEntry(
+  dbName: string,
+  storeName: string,
+  physicalKey: string,
+  entry: CacheEntry,
+): Promise<void> {
+  const indexedDB = globalThis.indexedDB;
+  if (!indexedDB) throw new Error("indexedDB missing");
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open(dbName);
+    req.onerror = () => reject(req.error ?? new Error("open failed"));
+    req.onsuccess = () => resolve(req.result);
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(storeName, "readwrite");
+      tx.objectStore(storeName).put(entry, physicalKey);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("put failed"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
 describe("package exports (TC-P)", () => {
   it("TC-P01: exports createCache and TTL constants", () => {
     expect(typeof createCache).toBe("function");
@@ -105,7 +130,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect(await cache.has("missing")).toBe(false);
   });
 
-  it("TC-C03: default TTL ≈ 1 year", async () => {
+  it("TC-C03: default TTL ≈ 1 year / createdAt set", async () => {
     const cache = createCache();
     const before = Date.now();
     await cache.set("k", "v");
@@ -117,6 +142,8 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect(entry!.expiresAt).toBeLessThanOrEqual(
       Date.now() + DEFAULT_CACHE_TTL_SECONDS * 1000 + 2000,
     );
+    expect(entry!.createdAt).toBeGreaterThanOrEqual(before);
+    expect(entry!.createdAt).toBeLessThanOrEqual(Date.now() + 2000);
   });
 
   it("TC-C04: instance ttlSeconds applies to set", async () => {
@@ -186,6 +213,9 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     await cache.set("k", "new");
     await cache.remove("k");
     await cache.clear();
+    await cache.purge({ all: true });
+    await cache.purge({ keys: ["k"] });
+    await cache.purge({ olderThan: { seconds: 0 } });
     expect([...store.entries()]).toEqual([...snapshot.entries()]);
   });
 
@@ -240,6 +270,11 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     await expect(cache.remove("k")).resolves.toBeUndefined();
     expect(await cache.has("k")).toBe(false);
     await expect(cache.clear()).resolves.toBeUndefined();
+    await expect(cache.purge({ all: true })).resolves.toBeUndefined();
+    await expect(cache.purge({ keys: ["k"] })).resolves.toBeUndefined();
+    await expect(
+      cache.purge({ olderThan: { mins: 1 } }),
+    ).resolves.toBeUndefined();
   });
 
   it("TC-C16: write failures are swallowed", async () => {
@@ -264,7 +299,102 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     await cache.set(url, { x: 1 });
     const parsed = JSON.parse(store.get(url)!) as CacheEntry;
     expect(typeof parsed.expiresAt).toBe("number");
+    expect(typeof parsed.createdAt).toBe("number");
     expect(parsed.data).toEqual({ x: 1 });
+  });
+
+  it("TC-C17: purge({ all: true }) matches clear scope", async () => {
+    store.set("other", "keep");
+    const cache = createCache({ keyPrefix: "app:" });
+    await cache.set("k", 1);
+    await cache.set("m", 2);
+    await cache.purge({ all: true });
+    expect(store.has("app:k")).toBe(false);
+    expect(store.has("app:m")).toBe(false);
+    expect(store.get("other")).toBe("keep");
+  });
+
+  it("TC-C18: purge({ keys }) removes only listed keys", async () => {
+    const cache = createCache();
+    await cache.set("a", 1);
+    await cache.set("b", 2);
+    await cache.set("c", 3);
+    await cache.purge({ keys: ["a", "c"] });
+    expect(await cache.get("a")).toBeNull();
+    expect(await cache.get("b")).toBe(2);
+    expect(await cache.get("c")).toBeNull();
+    await cache.purge({ keys: [] });
+    expect(await cache.get("b")).toBe(2);
+    await expect(cache.purge({ keys: ["missing"] })).resolves.toBeUndefined();
+  });
+
+  it("TC-C19: purge({ olderThan }) removes only old entries", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+    const cache = createCache();
+    await cache.set("old", 1);
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    await cache.set("fresh", 2);
+    await cache.purge({ olderThan: { mins: 10 } });
+    expect(await cache.get("old")).toBeNull();
+    expect(await cache.get("fresh")).toBe(2);
+
+    await cache.purge({ all: true });
+    await cache.set("combo-old", 3);
+    vi.advanceTimersByTime(90 * 60 * 1000);
+    await cache.set("combo-new", 4);
+    await cache.purge({ olderThan: { hours: 1, mins: 30 } });
+    expect(await cache.get("combo-old")).toBeNull();
+    expect(await cache.get("combo-new")).toBe(4);
+  });
+
+  it("TC-C20: olderThan keeps legacy entries without createdAt", async () => {
+    const cache = createCache();
+    store.set(
+      "legacy",
+      JSON.stringify({
+        expiresAt: Date.now() + 60_000,
+        data: "legacy",
+      } satisfies CacheEntry),
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+    await cache.set("dated", 1);
+    vi.advanceTimersByTime(1000);
+    await cache.purge({ olderThan: { seconds: 0 } });
+    expect(await cache.get("legacy")).toBe("legacy");
+    expect(await cache.get("dated")).toBeNull();
+  });
+
+  it("TC-C21: invalid olderThan throws TypeError", async () => {
+    const cache = createCache();
+    await cache.set("k", 1);
+    const snapshot = new Map(store);
+    await expect(cache.purge({ olderThan: {} })).rejects.toThrow(TypeError);
+    await expect(cache.purge({ olderThan: {} })).rejects.toThrow(/olderThan/);
+    await expect(cache.purge({ olderThan: { mins: -1 } })).rejects.toThrow(
+      TypeError,
+    );
+    await expect(cache.purge({ olderThan: { hours: Number.NaN } })).rejects.toThrow(
+      TypeError,
+    );
+    await expect(
+      cache.purge({ olderThan: { years: Number.POSITIVE_INFINITY } }),
+    ).rejects.toThrow(TypeError);
+    expect([...store.entries()]).toEqual([...snapshot.entries()]);
+  });
+
+  it("TC-LS04: purge({ olderThan }) does not touch other prefixes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+    const app = createCache({ keyPrefix: "app:" });
+    const plain = createCache();
+    await app.set("k", 1);
+    await plain.set("k", 2);
+    vi.advanceTimersByTime(1000);
+    await app.purge({ olderThan: { seconds: 0 } });
+    expect(await app.get("k")).toBeNull();
+    expect(await plain.get("k")).toBe(2);
   });
 });
 
@@ -325,6 +455,7 @@ describe("indexedDB backend (TC-IDB)", () => {
     expect(typeof raw).not.toBe("string");
     expect(raw).toMatchObject({
       expiresAt: expect.any(Number),
+      createdAt: expect.any(Number),
       data: { x: 1 },
     });
   });
@@ -337,6 +468,11 @@ describe("indexedDB backend (TC-IDB)", () => {
     await expect(cache.remove("k")).resolves.toBeUndefined();
     expect(await cache.has("k")).toBe(false);
     await expect(cache.clear()).resolves.toBeUndefined();
+    await expect(cache.purge({ all: true })).resolves.toBeUndefined();
+    await expect(cache.purge({ keys: ["k"] })).resolves.toBeUndefined();
+    await expect(
+      cache.purge({ olderThan: { seconds: 1 } }),
+    ).resolves.toBeUndefined();
   });
 
   it("TC-IDB06 / TC-C04: instance ttlSeconds", async () => {
@@ -387,6 +523,9 @@ describe("indexedDB backend (TC-IDB)", () => {
     await cache.set("k", "new");
     await cache.remove("k");
     await cache.clear();
+    await cache.purge({ all: true });
+    await cache.purge({ keys: ["k"] });
+    await cache.purge({ olderThan: { seconds: 0 } });
     const enabled = await freshCreate({ storage: "indexedDB" });
     expect(await enabled.get("k")).toBe("kept");
   });
@@ -427,5 +566,71 @@ describe("indexedDB backend (TC-IDB)", () => {
     await a.clear();
     expect(await a.get("k")).toBeNull();
     expect(await b.get("k")).toBe(2);
+  });
+
+  it("TC-IDB06 / TC-C17: purge all", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("a", 1);
+    await cache.set("b", 2);
+    await cache.purge({ all: true });
+    expect(await cache.get("a")).toBeNull();
+    expect(await cache.get("b")).toBeNull();
+  });
+
+  it("TC-IDB06 / TC-C18: purge keys", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("a", 1);
+    await cache.set("b", 2);
+    await cache.set("c", 3);
+    await cache.purge({ keys: ["a", "c"] });
+    expect(await cache.get("a")).toBeNull();
+    expect(await cache.get("b")).toBe(2);
+    expect(await cache.get("c")).toBeNull();
+  });
+
+  it("TC-IDB06 / TC-C19: purge olderThan", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("old", 1);
+    await cache.set("fresh", 2);
+    const now = Date.now();
+    await putIdbEntry("cachian", "entries", "old", {
+      expiresAt: now + 60_000,
+      data: 1,
+      createdAt: now - 11 * 60 * 1000,
+    });
+    await putIdbEntry("cachian", "entries", "fresh", {
+      expiresAt: now + 60_000,
+      data: 2,
+      createdAt: now,
+    });
+    await cache.purge({ olderThan: { mins: 10 } });
+    expect(await cache.get("old")).toBeNull();
+    expect(await cache.get("fresh")).toBe(2);
+  });
+
+  it("TC-IDB06 / TC-C20: olderThan keeps legacy without createdAt", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("legacy", "tmp");
+    await cache.set("dated", "tmp");
+    const now = Date.now();
+    await putIdbEntry("cachian", "entries", "legacy", {
+      expiresAt: now + 60_000,
+      data: "legacy",
+    });
+    await putIdbEntry("cachian", "entries", "dated", {
+      expiresAt: now + 60_000,
+      data: 1,
+      createdAt: now - 1000,
+    });
+    await cache.purge({ olderThan: { seconds: 0 } });
+    expect(await cache.get("legacy")).toBe("legacy");
+    expect(await cache.get("dated")).toBeNull();
+  });
+
+  it("TC-IDB06 / TC-C21: invalid olderThan", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("k", 1);
+    await expect(cache.purge({ olderThan: {} })).rejects.toThrow(TypeError);
+    expect(await cache.get("k")).toBe(1);
   });
 });
