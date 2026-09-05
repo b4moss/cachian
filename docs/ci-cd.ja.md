@@ -26,15 +26,12 @@ feature/* / cursor/*
   PR → develop / dev-*     ← CI（Gate → Test ‖ Build → "Test & Build"）
         │
         ▼
-     release               ← v* タグはここからのみ（初回リリース時にブランチ作成）
-        │
-        ▼
-      main                 ← Scorecard・既定ブランチ
+      main                 ← Scorecard・既定ブランチ・v* タグはここからのみ
 ```
 
 - 日常の統合先: `develop`（必要時は版付き `dev-*`）
-- リリース: `release` に取り込み、`vX.Y.Z`（または `vX.Y.Z-rc.N`）をタグ付け
-- `main` / `release` 向け PR では CI に依存しない（参考リポジトリと同じ）
+- リリース: `main` に取り込み、`main` 上で `vX.Y.Z`（または `vX.Y.Z-rc.N`）をタグ付け
+- `main` 向け PR では CI に依存しない（安定ブランチ向けの参考リポジトリと同じ扱い）
 
 ## ローカルゲート（PR 前必須）
 
@@ -83,7 +80,7 @@ npm run ci:local:fallback   # npm ci && npm test && npm run build
 | 項目 | ルール |
 |------|--------|
 | トリガ | base が `develop` または `dev-*` の `pull_request` |
-| 発火しない例 | 任意ブランチへの push、`main` / `release` などへの PR |
+| 発火しない例 | 任意ブランチへの push、`main` などへの PR |
 | 重いジョブのスキップ | 同一 head SHA に成功済みの `CI` ワークフローがある |
 | docs のみ | `docs/**`・`*.md`・`LICENSE`・`.github/**/*.md` のみ → GitHub 上は Test/Build スキップ。ローカル act は原則フル |
 | 並行 | `Gate` の後に `Test` と `Build` を並行 |
@@ -97,12 +94,12 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 | 項目 | ルール |
 |------|--------|
 | トリガ | `v*` の GitHub Release **published**、またはタグ指定の `workflow_dispatch` |
-| 祖先チェック | タグのコミットが `origin/release` の祖先であること |
+| 祖先チェック | タグのコミットが `origin/main` の祖先であること |
 | 検証スキップ | その SHA に CI success があれば Test/Build 省略。pack + provenance publish は常に実行 |
 | dist-tag | プレリリース（`*-rc.*` 等）は `--tag rc`、それ以外は `latest` |
 | 認証 | npm **Trusted Publishing**（OIDC）。npmjs.com → パッケージ → Trusted Publisher で GitHub org `b4moss`・repo `cachian`・workflow `publish.yml` を指定。`NPM_TOKEN` シークレットは使わない。`id-token: write`、Node 24、npm ≥ 11.5.1 が必要 |
 
-`v*` タグは **`release` ブランチから**打つ。
+`v*` タグは **`main` ブランチから**打つ。
 
 ## バッジ（README）
 
@@ -124,7 +121,7 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 1. **方針ドキュメント + README バッジ** — 完了。
 2. **CI スキャフォールド** — `ci.yml`、`.actrc`、`codecov.yml`、`ci:local` / `ci:local:fallback`、Dependabot。
 3. **セキュリティ** — CodeQL + Scorecard。
-4. **CD** — `release-on-tag.yml` + `publish.yml`（本変更）。初回 `v*` タグの前に `release` ブランチを作成し、npmjs.com で `@b4moss/cachian` の Trusted Publisher に GitHub org `b4moss` / repo `cachian` / workflow `publish.yml` を登録する。リポジトリの `NPM_TOKEN` シークレットは不要。
+4. **CD** — `release-on-tag.yml` + `publish.yml`（本変更）。CD 利用前に npmjs.com で `@b4moss/cachian` の Trusted Publisher に GitHub org `b4moss` / repo `cachian` / workflow `publish.yml` を登録する。リポジトリの `NPM_TOKEN` シークレットは不要。`v*` タグは `main` から打つ。
 5. **ブランチ保護** — `develop` / `dev-*` で **`Test & Build`** を required に。
 
 ## 流れ
@@ -133,5 +130,5 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 ローカル変更 → npm run ci:local（必須）
             → develop / dev-* へ PR
             → CI Gate → Test ‖ Build → "Test & Build"
-release 上のタグ v* → Release → Publish（CI 再利用 or 再検証）→ npm
+main 上のタグ v* → Release → Publish（CI 再利用 or 再検証）→ npm
 ```
