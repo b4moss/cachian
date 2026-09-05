@@ -100,7 +100,7 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 | 祖先チェック | タグのコミットが `origin/release` の祖先であること |
 | 検証スキップ | その SHA に CI success があれば Test/Build 省略。pack + provenance publish は常に実行 |
 | dist-tag | プレリリース（`*-rc.*` 等）は `--tag rc`、それ以外は `latest` |
-| 認証 | npm **Trusted Publishing**（OIDC）。npmjs.com → パッケージ → Trusted Publisher で GitHub org `b4moss`・repo `cachian`・workflow `publish.yml` を指定。`NPM_TOKEN` シークレットは使わない。`id-token: write`、Node 24、npm ≥ 11.5.1 が必要 |
+| 認証 | npm **Trusted Publishing**（OIDC）。npmjs.com → パッケージ → Settings → Trusted Publisher で GitHub org `b4moss`・repo `cachian`・workflow `publish.yml` を指定。GitHub に長期 `NPM_TOKEN` は置かない。`id-token: write`、Node 24、npm ≥ 11.5.1 が必要。**初回:** パッケージが npm に無いと Trusted Publisher を付けられない（サイト上の新規追加は Forbidden になりやすい）。先に短命トークン / `npm login` で `@b4moss/cachian` を一度 `npm publish --access public` し、その後 Trusted Publisher を付けてトークンを破棄する。 |
 
 `v*` タグは **`release` ブランチから**打つ。
 
@@ -124,7 +124,7 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 1. **方針ドキュメント + README バッジ** — 完了。
 2. **CI スキャフォールド** — `ci.yml`、`.actrc`、`codecov.yml`、`ci:local` / `ci:local:fallback`、Dependabot。
 3. **セキュリティ** — CodeQL + Scorecard。
-4. **CD** — `release-on-tag.yml` + `publish.yml`（本変更）。初回 `v*` タグの前に `release` ブランチを作成し、npmjs.com で `@b4moss/cachian` の Trusted Publisher に GitHub org `b4moss` / repo `cachian` / workflow `publish.yml` を登録する。リポジトリの `NPM_TOKEN` シークレットは不要。
+4. **CD** — `release-on-tag.yml` + `publish.yml`（本変更）。初回 CI 公開の前に: (a) `release` ブランチ作成、(b) **一度だけ** 短命トークン / `npm login` で `@b4moss/cachian` を `npm publish --access public`（Trusted Publisher 画面はパッケージ未作成だと Forbidden / 設定不可）、(c) npmjs.com で Trusted Publisher に GitHub org `b4moss` / repo `cachian` / workflow `publish.yml` を登録、(d) ブートストラップ用トークンを破棄。GitHub に長期 `NPM_TOKEN` シークレットは不要。
 5. **ブランチ保護** — `develop` / `dev-*` で **`Test & Build`** を required に。
 
 ## 流れ
