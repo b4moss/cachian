@@ -45,7 +45,7 @@ npm run ci:local
 act pull_request -W .github/workflows/ci.yml
 ```
 
-Defaults live in [`.actrc`](../.actrc) (to be added with workflows). Under `act`, the CI gate always runs Test/Build (`ACT=true`). Codecov is skipped when `ACT` is set.
+Defaults live in [`.actrc`](../.actrc). Under `act`, the CI gate always runs Test/Build (`ACT=true`). Codecov is skipped when `ACT` is set.
 
 Without Docker (some Cloud Agent environments):
 
@@ -65,14 +65,14 @@ Do not open or update a PR while this gate is failing.
 
 | File | Role | Status |
 |------|------|--------|
-| `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → aggregate **Test & Build** | Planned |
+| `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → aggregate **Test & Build** | Implemented |
 | `.github/workflows/codeql.yml` | CodeQL on PR to `develop`/`dev-*`, push to `main`, weekly | Planned |
-| `.github/workflows/scorecard.yml` | OpenSSF Scorecard on `main` + schedule | Planned |
+| `.github/workflows/scorecard.yml` | OpenSSF Scorecard on `main` + schedule | Implemented |
 | `.github/workflows/release-on-tag.yml` | Push `v*` → create GitHub Release | Implemented |
 | `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | Implemented |
-| `.github/dependabot.yml` | Weekly npm + Actions updates (grouped, no auto-merge) | Planned |
+| `.github/dependabot.yml` | Weekly npm + Actions updates (grouped, no auto-merge) | Implemented |
 | `.github/codeql/codeql-config.yml` | Ignore `dist/**`, `coverage/**` | Planned |
-| `codecov.yml` | Project/patch informational; no PR comment | Planned |
+| `codecov.yml` | Project/patch informational; no PR comment | Implemented |
 | `deploy-docs.yml` / `monitor-source-hash.yml` | — | Not adopted |
 
 ### CI rules (mirror reference)
@@ -119,8 +119,8 @@ Until workflows run and the package is published, some badges may show unknown/e
 ## Implementation order
 
 1. **Direction docs + README badges** — done.
-2. **CI scaffold** — `ci.yml`, `.actrc`, `codecov.yml`, `package.json` scripts `ci:local` / `ci:local:fallback`, Dependabot.
-3. **Security** — CodeQL + Scorecard.
+2. **CI scaffold** — `ci.yml`, `.actrc`, `codecov.yml`, `package.json` scripts `ci:local` / `ci:local:fallback`, Dependabot — done.
+3. **Security** — CodeQL (planned) + Scorecard (done).
 4. **CD** — `release-on-tag.yml` + `publish.yml` (this change). Before relying on CD: on npmjs.com add a Trusted Publisher for `@b4moss/cachian` pointing at GitHub org `b4moss` / repo `cachian` / workflow `publish.yml`. No repo `NPM_TOKEN` secret. Create `v*` tags from `main`.
 5. **Branch protection** — require check name **`Test & Build`** on `develop` / `dev-*`.
 

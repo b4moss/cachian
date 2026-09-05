@@ -1,0 +1,6 @@
+# Default act settings for local CI (nektos/act).
+# Prefer `npm run ci:local` before opening/updating PRs to develop / dev-*.
+# Requires Docker. Without Docker, use `npm run ci:local:fallback`.
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
+--container-architecture linux/amd64
+-W .github/workflows/ci.yml
