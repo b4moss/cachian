@@ -9,7 +9,7 @@
 
 [English](./README.md)
 
-**localStorage**（既定）と **IndexedDB** を切り替えられる、TTL 付きの小さな非同期ブラウザキャッシュヘルパーです。
+**localStorage**（既定）と **IndexedDB** を切り替えられる、TTL 付きの小さな非同期 **ブラウザ専用** キャッシュヘルパーです。
 
 [`@b4moss/jp-local-gov-id`](https://github.com/b4moss/jp-local-gov-id) のキャッシュロジックを外出し・汎用化したものです。
 
@@ -31,6 +31,8 @@ const cache = createCache(); // 既定は localStorage
 await cache.set("https://example.com/data.json", { hello: "world" });
 const data = await cache.get("https://example.com/data.json");
 ```
+
+ブラウザ専用です。選んだバックエンド API（`localStorage` / `indexedDB`）が無い環境（Node / SSR など）で `createCache()` を呼ぶと `CachianEnvironmentError` になります。モジュールの import だけなら問題ありません — `createCache()` はブラウザで呼ぶか、`typeof window !== "undefined"` などでガードしてください。
 
 ### IndexedDB
 

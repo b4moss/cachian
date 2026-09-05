@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CACHE_TTL_MS,
+  CachianEnvironmentError,
   createCache,
   DEFAULT_CACHE_TTL_SECONDS,
 } from "./index";
@@ -88,10 +89,18 @@ async function putIdbEntry(
 }
 
 describe("package exports (TC-P)", () => {
-  it("TC-P01: exports createCache and TTL constants", () => {
+  it("TC-P01: exports createCache, CachianEnvironmentError, and TTL constants", () => {
     expect(typeof createCache).toBe("function");
+    expect(CachianEnvironmentError.prototype).toBeInstanceOf(Error);
     expect(DEFAULT_CACHE_TTL_SECONDS).toBe(31536000);
     expect(CACHE_TTL_MS).toBe(DEFAULT_CACHE_TTL_SECONDS * 1000);
+  });
+
+  it("TC-C22: importing the module alone does not throw", async () => {
+    await expect(import("./index")).resolves.toMatchObject({
+      createCache: expect.any(Function),
+      CachianEnvironmentError: expect.any(Function),
+    });
   });
 
   it("TC-P02: runtime dependencies are empty", async () => {
@@ -265,24 +274,37 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect(store.get("other")).toBe("keep");
   });
 
-  it("TC-C15: missing localStorage does not throw", async () => {
+  it("TC-C15: missing localStorage throws CachianEnvironmentError", () => {
     vi.stubGlobal("localStorage", undefined);
+    expect(() => createCache()).toThrow(CachianEnvironmentError);
+    expect(() => createCache()).toThrow(/localStorage/);
+    expect(store.size).toBe(0);
+  });
+
+  it("TC-C23: localStorage accessor throw is also unsupported", () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("blocked");
+      },
+    });
+    try {
+      expect(() => createCache()).toThrow(CachianEnvironmentError);
+      expect(() => createCache()).toThrow(/localStorage/);
+    } finally {
+      if (previous) {
+        Object.defineProperty(globalThis, "localStorage", previous);
+      } else {
+        Reflect.deleteProperty(globalThis, "localStorage");
+      }
+    }
+  });
+
+  it("TC-C24: createCache succeeds when APIs are available", async () => {
     const cache = createCache();
-    expect(await cache.get("k")).toBeNull();
-    await expect(cache.set("k", 1)).resolves.toBeUndefined();
-    await expect(cache.update("k", 2)).resolves.toBeUndefined();
-    await expect(cache.upsert("k", 3)).resolves.toBeUndefined();
-    await expect(cache.remove("k")).resolves.toBeUndefined();
-    expect(await cache.has("k")).toBe(false);
-    await expect(cache.clear()).resolves.toBeUndefined();
-    await expect(cache.purge({ all: true })).resolves.toBeUndefined();
-    await expect(cache.purge({ keys: ["k"] })).resolves.toBeUndefined();
-    await expect(
-      cache.purge({ olderThan: { mins: 1 } }),
-    ).resolves.toBeUndefined();
-    await expect(
-      cache.purge({ createdBefore: "2099-01-01T00:00:00.000Z" }),
-    ).resolves.toBeUndefined();
+    await cache.set("k", 1);
+    expect(await cache.get("k")).toBe(1);
   });
 
   it("TC-C16: write failures are swallowed", async () => {
@@ -773,19 +795,12 @@ describe("indexedDB backend (TC-IDB)", () => {
     });
   });
 
-  it("TC-IDB05: missing indexedDB does not throw", async () => {
+  it("TC-IDB05: missing indexedDB throws CachianEnvironmentError", () => {
     vi.stubGlobal("indexedDB", undefined);
-    const cache = await freshCreate({ storage: "indexedDB" });
-    expect(await cache.get("k")).toBeNull();
-    await expect(cache.set("k", 1)).resolves.toBeUndefined();
-    await expect(cache.remove("k")).resolves.toBeUndefined();
-    expect(await cache.has("k")).toBe(false);
-    await expect(cache.clear()).resolves.toBeUndefined();
-    await expect(cache.purge({ all: true })).resolves.toBeUndefined();
-    await expect(cache.purge({ keys: ["k"] })).resolves.toBeUndefined();
-    await expect(
-      cache.purge({ olderThan: { seconds: 1 } }),
-    ).resolves.toBeUndefined();
+    expect(() => createCache({ storage: "indexedDB" })).toThrow(
+      CachianEnvironmentError,
+    );
+    expect(() => createCache({ storage: "indexedDB" })).toThrow(/IndexedDB/i);
   });
 
   it("TC-IDB06 / TC-C04: instance ttlSeconds", async () => {

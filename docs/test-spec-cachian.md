@@ -1,8 +1,8 @@
 # テスト仕様書: `@b4moss/cachian`（汎用ブラウザキャッシュ）
 
-対象マイルストーン: `v0.3.0`（`update` / `upsert` / 絶対時刻パージ）  
-関連: [#16 各種新メソッド追加](https://github.com/b4moss/cachian/issues/16) / 抽出元 `b4moss/jp-local-gov-id` の `packages/jp-local-gov-id/src/cache.ts`  
-作業ブランチ: `cursor/issue-16-new-methods-4753`  
+対象マイルストーン: `v0.3.0`（サーバー非対応環境の生成時エラー）  
+関連: [#18 サーバーサイドでの実行をプリベント](https://github.com/b4moss/cachian/issues/18) / 抽出元 `b4moss/jp-local-gov-id` の `packages/jp-local-gov-id/src/cache.ts`  
+作業ブランチ: `cursor/prevent-server-side-d013`  
 想定実装: リポジトリルートの単一パッケージ（`src/createCache.ts` ほか）
 
 ## 1. 目的
@@ -13,9 +13,9 @@
 - 既定バックエンドは **localStorage**
 - オプションで **IndexedDB** に切り替え可能
 - 読み書きはすべて **非同期**（`Promise`）
-- エントリ形式 `{ expiresAt, data, createdAt? }`・TTL（秒）・無効化・ストレージ不可時の握りつぶしは抽出元と同等
-- **書き込み系の使い分け**: `set`（常に新規エントリ）/ `update`（既存のみ）/ `upsert`（無ければ `set`、有れば `update`）
-- **パージ API**（全削除 / キー配列削除 / 相対経過時間削除 / 絶対時刻削除）で選択的にキャッシュを捨てられる
+- **ブラウザ専用**: 選んだバックエンド API（`localStorage` / `indexedDB`）が無い環境では `createCache()` が失敗する（§3.2.1 / §5.6.1）
+- エントリ形式 `{ expiresAt, data, createdAt? }`・TTL（秒）・無効化・**操作時**のストレージ失敗握りつぶしは抽出元と同等（§5.6.2）
+- **パージ API**（全削除 / キー配列削除 / 経過時間削除）で選択的にキャッシュを捨てられる
 - **本仕様の直接対象外**: `jp-local-gov-id` への配線、CDN 配信の実行時検証、カスタム `StorageAdapter` の公開
 
 ## 2. 用語
@@ -31,8 +31,9 @@
 | 絶対時刻 | `purge` の `createdBefore` / `createdAfter` に渡す時刻。ISO 8601 文字列、またはエポック秒／ミリ秒の数値（§3.5.3） |
 | 論理キー | 呼び出し側が渡す `key` 文字列 |
 | 物理キー | 実際にストレージへ書くキー。`keyPrefix` がある場合は `keyPrefix + 論理キー` |
-| miss | `get` が `null` を返すこと（未保存・期限切れ・壊れたエントリ・無効化・ストレージ不可） |
+| miss | `get` が `null` を返すこと（未保存・期限切れ・壊れたエントリ・無効化・操作時のストレージ失敗） |
 | no-op | 例外を投げず、状態も変えないこと |
+| 環境非対応 | 選んだバックエンド API が `undefined`、または生成時の可用性チェックでアクセスできないこと（サーバー等）。`createCache()` が `CachianEnvironmentError` を投げる |
 | パージ | `purge(options)` による明示的な一括／選択削除。既存の `clear` / `remove` とは別メソッド |
 
 ## 3. 公開 API 契約
@@ -58,6 +59,43 @@
 | `storeName` | `string` | `"entries"` | 同上 |
 
 不正な `ttlSeconds` のエラーメッセージは `ttlSeconds` または `cacheTtlSeconds` を含む文言でよい（抽出元は `cacheTtlSeconds`）。本パッケージでは **`ttlSeconds` を含む**こと。
+
+### 3.2.1 実行環境ガード（ブラウザ専用）
+
+`createCache()` は **モジュール import 時には throw しない**。生成時に、選んだバックエンドの API が利用可能かを確認する。
+
+| 条件 | 結果 |
+|------|------|
+| `storage` 未指定または `"localStorage"` で `globalThis.localStorage` が使えない | **`CachianEnvironmentError`** |
+| `storage: "indexedDB"` で `globalThis.indexedDB` が使えない | **`CachianEnvironmentError`** |
+| 上記 API が使える（テスト用 stub / `fake-indexeddb` 含む） | 通常どおり `Cache` を返す |
+
+「使えない」の定義:
+
+- プロパティが `undefined`
+- プロパティ読み取り時に例外（既存アダプタと同様に `try/catch`）
+
+`CachianEnvironmentError`:
+
+- `Error` を継承する専用クラス（パッケージから export。呼び出し側が `instanceof` で判別できること）
+- `name` は `"CachianEnvironmentError"`
+- メッセージは次を満たすこと:
+  - ブラウザ環境が必要である旨が分かる
+  - 不足 API 名を含む（localStorage 経路は `localStorage`、IndexedDB 経路は `IndexedDB` または `indexedDB`）
+
+メッセージ例:
+
+```text
+cachian requires a browser environment with localStorage
+```
+
+```text
+cachian requires a browser environment with IndexedDB
+```
+
+不正 `ttlSeconds` の `TypeError` と混同しないこと。環境ガードは TTL 検証の前後どちらでもよいが、**ストレージへ触る前**に失敗すること。
+
+SSR（Next.js 等）では import はサーバーでも通る想定。`createCache()` の呼び出しはブラウザ（または API がある環境）に限定する。`enabled: false` は環境非対応の代替にしない（API が無ければ `enabled` に関わらず throw）。
 
 ### 3.3 `Cache` メソッド
 
@@ -298,11 +336,23 @@ createdAt != null
 
 ### 5.6 ストレージ不可・書き込み失敗
 
-次の場合、例外を外へ投げず miss / no-op:
+本節は **環境非対応（生成時）** と **操作時失敗（握りつぶし）** を分ける。
 
-- `localStorage` / `indexedDB` が未定義、またはアクセス時に throw
+#### 5.6.1 環境非対応（`createCache` 時）
+
+次は §3.2.1 のとおり **`CachianEnvironmentError`**（miss / no-op にしない）:
+
+- 選んだバックエンドの `localStorage` / `indexedDB` が未定義
+- 生成時の可用性チェックで当該 API へのアクセスが throw
+
+一度生成に成功したインスタンスに対し、後から API が消えるケースは本仕様の必須対象外（実装は操作時 §5.6.2 に落としてよい）。
+
+#### 5.6.2 操作時の失敗（握りつぶし）
+
+API は存在するが個別操作が失敗する場合、例外を外へ投げず miss / no-op:
+
 - `setItem` / IDB put が QuotaExceeded 等で失敗
-- IndexedDB の open / upgrade 失敗
+- IndexedDB の open / upgrade 失敗（生成時チェックを通過したあとの実行時失敗）
 - `purge` / 列挙中の読み取り・削除失敗（握りつぶして続行、または全体 no-op。外へは投げない）
 
 ### 5.7 `keyPrefix`
@@ -439,15 +489,16 @@ createdAt != null
 - **localStorage**: prefix `"app:"` のインスタンスで `set` したキーだけ消え、prefix なしで置いた他キーは残る
 - **IndexedDB**: 同一 `dbName`/`storeName` 内の全エントリが消える。別 `storeName` のインスタンスのデータは残ってよい
 
-### TC-C15: ストレージ未定義でも落ちない
+### TC-C15: ストレージ未定義なら `createCache` が `CachianEnvironmentError`
 
-- **前提**: `localStorage` または `indexedDB` を `undefined` に stub（当該バックエンド）
-- **操作**: `get` / `set` / `update` / `upsert` / `remove` / `has` / `clear` / `purge`
-- **期待**: reject せず、`get` は `null`、書き込み系 / `purge` は no-op
+- **前提**: 既定（localStorage）経路。`globalThis.localStorage` を `undefined` に stub（または削除）
+- **操作**: `createCache()`
+- **期待**: `CachianEnvironmentError`（`instanceof` 可）。メッセージに `localStorage` を含み、ブラウザ環境が必要である旨が分かる
+- **期待**: ストレージへ一切書き込まない
 
-### TC-C16: 書き込み失敗を握りつぶす
+### TC-C16: 書き込み失敗を握りつぶす（§5.6.2）
 
-- **前提**: localStorage の `setItem` が throw（QuotaExceeded 相当）。IndexedDB は put 失敗を stub
+- **前提**: `createCache()` は成功済み。localStorage の `setItem` が throw（QuotaExceeded 相当）。IndexedDB は put 失敗を stub
 - **操作**: `await set("k", hugeOrAny)`
 - **期待**: reject しない
 - **期待**: 続く `get("k")` は `null`
@@ -496,88 +547,24 @@ createdAt != null
 - **期待**: いずれも `TypeError`（メッセージに `olderThan` またはフィールド名）
 - **期待**: ストレージ内容は変わらない
 
-### TC-C22: `update` が既存の `data` のみ更新し `createdAt` を維持
+### TC-C22: import だけでは throw しない
 
-- **前提**: `await set("k", { a: 1 })` 済み。保存エントリの `createdAt` / `expiresAt` を記録
-- **操作**: 少し時刻を進めた後（任意）、`await update("k", { a: 2 })`
-- **期待**: `get("k")` は `{ a: 2 }`
-- **期待**: 保存エントリの `createdAt` は更新前と同一
-- **期待**: `expiresAt` も更新前と同一（`ttlSeconds` 未指定のため）
+- **前提**: `localStorage` / `indexedDB` が未定義の環境（Node 相当）でもよい
+- **操作**: `import { createCache, CachianEnvironmentError } from "@b4moss/cachian"`（またはテスト内の同モジュール import）
+- **期待**: モジュール評価は成功する（`createCache` を呼ばなければ throw しない）
 
-### TC-C23: `update` で `ttlSeconds` 指定時は `expiresAt` のみ更新
+### TC-C23: localStorage アクセス時 throw も環境非対応
 
-- **前提**: 有効エントリ `"k"` あり。`createdAt` を記録
-- **操作**: `await update("k", "v2", { ttlSeconds: 10 })`
-- **期待**: `data` は `"v2"`、`createdAt` は維持、`expiresAt` は約 `now + 10_000`
+- **前提**: `localStorage` のゲッターが throw するよう stub（プライベートモード等の模擬）
+- **操作**: `createCache()`
+- **期待**: `CachianEnvironmentError`（メッセージに `localStorage`）
 
-### TC-C24: `update` は miss / 期限切れで no-op
+### TC-C24: API がある環境では従来どおり生成できる
 
-- **操作**: 未保存キーに `await update("missing", 1)` → reject せず、キーは未作成のまま
-- **操作**: 期限切れエントリ `"exp"` に `await update("exp", 2)` → `get("exp")` は `null`（新しい値は書かれない）。期限切れキーは削除されていてよい
+- **前提**: 既存どおり Map ベースの `localStorage` stub（§4）
+- **操作**: `createCache()` および `createCache({ storage: "indexedDB" })`（後者は `fake-indexeddb` 投入後）
+- **期待**: throw せず `Cache` を返す。続く `set` / `get` は従来ケース（TC-C01 等）どおり
 
-### TC-C25: `upsert` は miss なら `set`、hit なら `update`
-
-- **操作**: 未保存 `"a"` に `await upsert("a", 1)` → `get("a")` は `1`、`createdAt` / `expiresAt` が付与される（`set` 相当）
-- **操作**: 続けて `await upsert("a", 2)`（ttl 未指定）→ `get("a")` は `2`、`createdAt` は 1 回目と同一（`update` 相当）
-- **操作**: `await upsert("a", 3, { ttlSeconds: 5 })` → `data` は `3`、`createdAt` 維持、`expiresAt` は約 `now + 5_000`
-
-### TC-C26: `set` は既存があっても `createdAt` / `expiresAt` を再生成
-
-- **前提**: `"k"` を保存し `createdAt` を記録。時刻を進める
-- **操作**: `await set("k", "replaced")`
-- **期待**: `get("k")` は `"replaced"`
-- **期待**: 新しい `createdAt` は旧値より大きい（再生成）
-- **期待**: （対比）同じ前提で `update` した場合は `createdAt` が変わらないこと（TC-C22 と整合）
-
-### TC-C27: `purge({ createdBefore })` が閾値より前のエントリのみ削除
-
-- **前提**: ストレージに次を直接配置（または fake timers）:
-  - `"old"`: `createdAt = Date.parse("2024-01-01T00:00:00.000Z")`
-  - `"mid"`: `createdAt = Date.parse("2024-06-01T00:00:00.000Z")`
-  - `"new"`: `createdAt = Date.parse("2024-12-01T00:00:00.000Z")`
-  - いずれも遠い未来の `expiresAt`
-- **操作**: `await purge({ createdBefore: "2024-06-01T00:00:00.000Z" })`
-- **期待**: `"old"` は miss、`"mid"` / `"new"` は hit（境界ちょうどは残す）
-
-### TC-C28: `purge({ createdAfter })` と範囲指定
-
-- **前提**: TC-C27 と同様の 3 エントリ
-- **操作**: `await purge({ createdAfter: "2024-06-01T00:00:00.000Z" })`
-- **期待**: `"new"` は miss、`"old"` / `"mid"` は hit
-- **操作**（別セットで再準備）: `await purge({ createdAfter: "2024-01-01T00:00:00.000Z", createdBefore: "2024-12-01T00:00:00.000Z" })`
-- **期待**: `"mid"` のみ miss、`"old"` / `"new"` は hit
-
-### TC-C29: `AbsoluteTime` のパース（ISO / 秒 / ミリ秒）
-
-- **前提**: `"k"` の `createdAt = 1_700_000_000_000`（例。テストで使う具体値は固定してよい）、遠い未来の `expiresAt`
-- **操作・期待**（いずれも同じ閾値解釈で `"k"` が削除されること）:
-  - ISO（秒精度）: `createdBefore: "2023-11-14T22:13:20.000Z"` など、`createdAt` より後の時刻文字列
-  - ISO（ミリ秒付き）: `createdBefore: "2023-11-14T22:13:20.123Z"` のように小数秒付きでもパースできる
-  - 数値ミリ秒: `createdBefore: 1_700_000_000_001`（`createdAt` より大きい ms）
-  - 数値秒: `createdBefore: 1_700_000_001`（秒と判定され `* 1000` される値。`createdAt` より後になるよう選ぶ）
-- **期待**: 不正文字列 `"not-a-date"` / `NaN` / `Infinity` は `TypeError`（メッセージに `createdBefore` / `createdAfter` / `AbsoluteTime` / `ISO` のいずれか）。ストレージ不変
-
-### TC-C30: 絶対時刻パージで `createdAt` 無しは残す
-
-- **前提**: legacy（`createdAt` 無し）と、閾値より前の `createdAt` 付きエントリ
-- **操作**: `await purge({ createdBefore: "2099-01-01T00:00:00.000Z" })`
-- **期待**: legacy は hit、古い `createdAt` 付きは miss
-
-### TC-C31: `olderThan` と絶対時刻の混在 → TypeError
-
-- **前提**: `"k"` を保存済みでもよい
-- **操作**（型アサーションで渡す）:
-  - `purge({ olderThan: { seconds: 1 }, createdBefore: "2024-01-01T00:00:00.000Z" } as any)`
-  - `purge({ olderThan: { mins: 1 }, createdAfter: 0 } as any)`
-- **期待**: いずれも `TypeError`（メッセージに `olderThan` と `createdBefore` または `createdAfter`）
-- **期待**: ストレージ内容は変わらない
-
-### TC-C32: 不正な `update` / `upsert` の `ttlSeconds` → TypeError
-
-- **前提**: 正当な `createCache()`、`"k"` を保存済み
-- **操作**: `await update("k", 1, { ttlSeconds: -1 })` / `await upsert("k", 1, { ttlSeconds: NaN })`
-- **期待**: `TypeError`（メッセージに `ttlSeconds`）
-- **期待**: ストレージ内容は変わらない
 
 ## 7. localStorage 固有（TC-LS）
 
@@ -630,9 +617,13 @@ createdAt != null
 - **操作**: `set` 後、IDB から直接取得（テストヘルパ可）
 - **期待**: 値がオブジェクトであり、文字列の JSON 丸ごとではない（`expiresAt` / `data` / `createdAt` プロパティを持つ）
 
-### TC-IDB05: IndexedDB 不可時の miss / no-op
+### TC-IDB05: IndexedDB 未定義なら `createCache` が `CachianEnvironmentError`
 
-- TC-C15 の indexedDB 版。必須
+- **前提**: `globalThis.indexedDB` を `undefined` に stub（または削除）。`fake-indexeddb` は投入しない
+- **操作**: `createCache({ storage: "indexedDB" })`
+- **期待**: `CachianEnvironmentError`。メッセージに `IndexedDB` または `indexedDB` を含み、ブラウザ環境が必要である旨が分かる
+- **期待**: IndexedDB / localStorage へ書き込まない
+- **備考**: 既定の localStorage 経路は TC-C15。本ケースは indexedDB 指定時のみ
 
 ### TC-IDB06: 共通ケースの再実行セット
 
@@ -659,7 +650,7 @@ createdAt != null
 
 ### TC-P01: エントリポイントから必要なシンボルを export
 
-- **期待**: `createCache` / `DEFAULT_CACHE_TTL_SECONDS` /（任意）`CACHE_TTL_MS` および公開型（`Cache` / `CacheEntry` / `CacheSetOptions` / `CreateCacheOptions` / `StorageBackend` / `CachePurgeOptions` / `CachePurgeOlderThan` / `AbsoluteTime`）が `@b4moss/cachian` から import できる
+- **期待**: `createCache` / `CachianEnvironmentError` / `DEFAULT_CACHE_TTL_SECONDS` /（任意）`CACHE_TTL_MS` および公開型（`Cache` / `CacheEntry` / `CacheSetOptions` / `CreateCacheOptions` / `StorageBackend` / `CachePurgeOptions` / `CachePurgeOlderThan`）が `@b4moss/cachian` から import できる
 - ビルド後 `dist` の types でも同様（`npm run build` 後の型チェック、または dts 生成物の存在確認）
 
 ### TC-P02: ランタイム依存ゼロ
@@ -668,11 +659,12 @@ createdAt != null
 
 ## 10. 受け入れ条件
 
-1. §6 の TC-C（TC-C17〜TC-C32 のパージ系・書き込み系を含む）を localStorage ですべてパス
-2. §7 の TC-LS（TC-LS04 / TC-LS05 を含む）をパス
-3. §8 の TC-IDB をパス（§8.6 の再実行セット含む）
-4. §9 の TC-P をパス
+1. §6 の TC-C（TC-C15 / TC-C22〜TC-C24 の環境ガード、および TC-C17〜TC-C21 のパージ系を含む）を localStorage ですべてパス
+2. §7 の TC-LS（TC-LS04 を含む）をパス
+3. §8 の TC-IDB をパス（TC-IDB05 の環境ガード、および §8.6 の再実行セットを含む）
+4. §9 の TC-P をパス（`CachianEnvironmentError` の export を含む）
 5. `npm test` および `npm run build` が CI / ローカルで成功
+6. 破壊的変更として、旧「ストレージ未定義でも miss / no-op」契約からの移行をリリースノート等で明示する
 
 ## 11. トレーサビリティ（抽出元）
 
@@ -686,6 +678,6 @@ createdAt != null
 | URL キー前提のコメント | 任意文字列キー |
 | （なし） | `cache.purge({ all \| keys \| olderThan \| createdBefore \| createdAfter })` |
 | （なし） | エントリの `createdAt`（新規書き込み） |
-| （なし） | `cache.update` / `cache.upsert`（#16） |
+| （なし・握りつぶし） | 環境非対応時は `CachianEnvironmentError`（生成時。#18） |
 
 本仕様は cachian 単体の契約であり、`createLocalGovClient` のオプション名（`cache` / `cacheTtlSeconds`）の互換は **jp-local-gov-id 配線時の別仕様**とする。
