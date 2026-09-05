@@ -67,7 +67,7 @@ npm run ci:local:fallback   # npm ci && npm test && npm run build
 |----------|------|------|
 | `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → 集約 **Test & Build** | 実装済み |
 | `.github/workflows/codeql.yml` | CodeQL（`develop`/`dev-*` PR、`main` push、週次） | 予定 |
-| `.github/workflows/scorecard.yml` | OpenSSF Scorecard（`main` + schedule） | 予定 |
+| `.github/workflows/scorecard.yml` | OpenSSF Scorecard（`main` + schedule） | 実装済み |
 | `.github/workflows/release-on-tag.yml` | `v*` push → GitHub Release 作成 | 実装済み |
 | `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | 実装済み |
 | `.github/dependabot.yml` | 週次 npm + Actions（グループ化、自動マージなし） | 実装済み |
@@ -120,7 +120,7 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 
 1. **方針ドキュメント + README バッジ** — 完了。
 2. **CI スキャフォールド** — `ci.yml`、`.actrc`、`codecov.yml`、`ci:local` / `ci:local:fallback`、Dependabot — 完了。
-3. **セキュリティ** — CodeQL + Scorecard。
+3. **セキュリティ** — CodeQL（予定）+ Scorecard（完了）。
 4. **CD** — `release-on-tag.yml` + `publish.yml`（本変更）。CD 利用前に npmjs.com で `@b4moss/cachian` の Trusted Publisher に GitHub org `b4moss` / repo `cachian` / workflow `publish.yml` を登録する。リポジトリの `NPM_TOKEN` シークレットは不要。`v*` タグは `main` から打つ。
 5. **ブランチ保護** — `develop` / `dev-*` で **`Test & Build`** を required に。
 
