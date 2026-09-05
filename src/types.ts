@@ -34,14 +34,21 @@ export type CachePurgeOlderThan = {
   seconds?: number;
 };
 
+/** Absolute time for purge thresholds: ISO 8601 string or epoch seconds/ms number. */
+export type AbsoluteTime = string | number;
+
 export type CachePurgeOptions =
   | { all: true }
   | { keys: string[] }
-  | { olderThan: CachePurgeOlderThan };
+  | { olderThan: CachePurgeOlderThan }
+  | { createdBefore: AbsoluteTime; createdAfter?: AbsoluteTime }
+  | { createdAfter: AbsoluteTime; createdBefore?: AbsoluteTime };
 
 export type Cache = {
   get(key: string): Promise<unknown | null>;
   set(key: string, data: unknown, options?: CacheSetOptions): Promise<void>;
+  update(key: string, data: unknown, options?: CacheSetOptions): Promise<void>;
+  upsert(key: string, data: unknown, options?: CacheSetOptions): Promise<void>;
   remove(key: string): Promise<void>;
   has(key: string): Promise<boolean>;
   clear(): Promise<void>;

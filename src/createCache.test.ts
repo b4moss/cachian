@@ -211,11 +211,14 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect(await cache.get("k")).toBeNull();
     expect(await cache.has("k")).toBe(false);
     await cache.set("k", "new");
+    await cache.update("k", "upd");
+    await cache.upsert("k", "ups");
     await cache.remove("k");
     await cache.clear();
     await cache.purge({ all: true });
     await cache.purge({ keys: ["k"] });
     await cache.purge({ olderThan: { seconds: 0 } });
+    await cache.purge({ createdBefore: "2099-01-01T00:00:00.000Z" });
     expect([...store.entries()]).toEqual([...snapshot.entries()]);
   });
 
@@ -267,6 +270,8 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     const cache = createCache();
     expect(await cache.get("k")).toBeNull();
     await expect(cache.set("k", 1)).resolves.toBeUndefined();
+    await expect(cache.update("k", 2)).resolves.toBeUndefined();
+    await expect(cache.upsert("k", 3)).resolves.toBeUndefined();
     await expect(cache.remove("k")).resolves.toBeUndefined();
     expect(await cache.has("k")).toBe(false);
     await expect(cache.clear()).resolves.toBeUndefined();
@@ -274,6 +279,9 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     await expect(cache.purge({ keys: ["k"] })).resolves.toBeUndefined();
     await expect(
       cache.purge({ olderThan: { mins: 1 } }),
+    ).resolves.toBeUndefined();
+    await expect(
+      cache.purge({ createdBefore: "2099-01-01T00:00:00.000Z" }),
     ).resolves.toBeUndefined();
   });
 
@@ -396,6 +404,310 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect(await app.get("k")).toBeNull();
     expect(await plain.get("k")).toBe(2);
   });
+
+  it("TC-C22: update changes data only and keeps createdAt", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+    const cache = createCache();
+    await cache.set("k", { a: 1 });
+    const before = readLocalEntry(store, "k")!;
+    vi.advanceTimersByTime(60_000);
+    await cache.update("k", { a: 2 });
+    const after = readLocalEntry(store, "k")!;
+    expect(await cache.get("k")).toEqual({ a: 2 });
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(after.expiresAt).toBe(before.expiresAt);
+  });
+
+  it("TC-C23: update with ttlSeconds refreshes expiresAt only", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+    const cache = createCache();
+    await cache.set("k", "v1");
+    const createdAt = readLocalEntry(store, "k")!.createdAt;
+    vi.advanceTimersByTime(5_000);
+    const now = Date.now();
+    await cache.update("k", "v2", { ttlSeconds: 10 });
+    const entry = readLocalEntry(store, "k")!;
+    expect(entry.data).toBe("v2");
+    expect(entry.createdAt).toBe(createdAt);
+    expect(entry.expiresAt).toBeGreaterThanOrEqual(now + 10_000);
+    expect(entry.expiresAt).toBeLessThanOrEqual(Date.now() + 10_000 + 50);
+  });
+
+  it("TC-C24: update is no-op on miss / expired", async () => {
+    const cache = createCache();
+    await expect(cache.update("missing", 1)).resolves.toBeUndefined();
+    expect(store.has("missing")).toBe(false);
+
+    store.set(
+      "exp",
+      JSON.stringify({
+        expiresAt: Date.now() - 1,
+        data: "old",
+        createdAt: Date.now() - 1000,
+      } satisfies CacheEntry),
+    );
+    await cache.update("exp", 2);
+    expect(await cache.get("exp")).toBeNull();
+    expect(store.has("exp")).toBe(false);
+  });
+
+  it("TC-C25: upsert is set on miss and update on hit", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-06-01T00:00:00.000Z"));
+    const cache = createCache();
+    await cache.upsert("a", 1);
+    expect(await cache.get("a")).toBe(1);
+    const first = readLocalEntry(store, "a")!;
+    expect(typeof first.createdAt).toBe("number");
+    expect(typeof first.expiresAt).toBe("number");
+
+    vi.advanceTimersByTime(1000);
+    await cache.upsert("a", 2);
+    const second = readLocalEntry(store, "a")!;
+    expect(await cache.get("a")).toBe(2);
+    expect(second.createdAt).toBe(first.createdAt);
+
+    const now = Date.now();
+    await cache.upsert("a", 3, { ttlSeconds: 5 });
+    const third = readLocalEntry(store, "a")!;
+    expect(third.data).toBe(3);
+    expect(third.createdAt).toBe(first.createdAt);
+    expect(third.expiresAt).toBeGreaterThanOrEqual(now + 5_000);
+    expect(third.expiresAt).toBeLessThanOrEqual(Date.now() + 5_000 + 50);
+  });
+
+  it("TC-C26: set regenerates createdAt / expiresAt even when key exists", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+    const cache = createCache();
+    await cache.set("k", "old");
+    const oldCreatedAt = readLocalEntry(store, "k")!.createdAt!;
+    vi.advanceTimersByTime(60_000);
+    await cache.set("k", "replaced");
+    const replaced = readLocalEntry(store, "k")!;
+    expect(await cache.get("k")).toBe("replaced");
+    expect(replaced.createdAt!).toBeGreaterThan(oldCreatedAt);
+  });
+
+  it("TC-C27: purge({ createdBefore }) removes only earlier entries", async () => {
+    const cache = createCache();
+    const far = Date.parse("2099-01-01T00:00:00.000Z");
+    store.set(
+      "old",
+      JSON.stringify({
+        expiresAt: far,
+        data: "old",
+        createdAt: Date.parse("2024-01-01T00:00:00.000Z"),
+      } satisfies CacheEntry),
+    );
+    store.set(
+      "mid",
+      JSON.stringify({
+        expiresAt: far,
+        data: "mid",
+        createdAt: Date.parse("2024-06-01T00:00:00.000Z"),
+      } satisfies CacheEntry),
+    );
+    store.set(
+      "new",
+      JSON.stringify({
+        expiresAt: far,
+        data: "new",
+        createdAt: Date.parse("2024-12-01T00:00:00.000Z"),
+      } satisfies CacheEntry),
+    );
+    await cache.purge({ createdBefore: "2024-06-01T00:00:00.000Z" });
+    expect(await cache.get("old")).toBeNull();
+    expect(await cache.get("mid")).toBe("mid");
+    expect(await cache.get("new")).toBe("new");
+  });
+
+  it("TC-C28: purge({ createdAfter }) and range", async () => {
+    const cache = createCache();
+    const far = Date.parse("2099-01-01T00:00:00.000Z");
+    const seed = async () => {
+      store.clear();
+      store.set(
+        "old",
+        JSON.stringify({
+          expiresAt: far,
+          data: "old",
+          createdAt: Date.parse("2024-01-01T00:00:00.000Z"),
+        } satisfies CacheEntry),
+      );
+      store.set(
+        "mid",
+        JSON.stringify({
+          expiresAt: far,
+          data: "mid",
+          createdAt: Date.parse("2024-06-01T00:00:00.000Z"),
+        } satisfies CacheEntry),
+      );
+      store.set(
+        "new",
+        JSON.stringify({
+          expiresAt: far,
+          data: "new",
+          createdAt: Date.parse("2024-12-01T00:00:00.000Z"),
+        } satisfies CacheEntry),
+      );
+    };
+
+    await seed();
+    await cache.purge({ createdAfter: "2024-06-01T00:00:00.000Z" });
+    expect(await cache.get("old")).toBe("old");
+    expect(await cache.get("mid")).toBe("mid");
+    expect(await cache.get("new")).toBeNull();
+
+    await seed();
+    await cache.purge({
+      createdAfter: "2024-01-01T00:00:00.000Z",
+      createdBefore: "2024-12-01T00:00:00.000Z",
+    });
+    expect(await cache.get("old")).toBe("old");
+    expect(await cache.get("mid")).toBeNull();
+    expect(await cache.get("new")).toBe("new");
+  });
+
+  it("TC-C29: AbsoluteTime parses ISO / seconds / milliseconds", async () => {
+    const cache = createCache();
+    const createdAt = 1_700_000_000_000;
+    const far = createdAt + 86_400_000;
+
+    const seed = () => {
+      store.set(
+        "k",
+        JSON.stringify({
+          expiresAt: far,
+          data: 1,
+          createdAt,
+        } satisfies CacheEntry),
+      );
+    };
+
+    seed();
+    await cache.purge({ createdBefore: "2023-11-14T22:13:20.000Z" });
+    expect(await cache.get("k")).toBeNull();
+
+    seed();
+    await cache.purge({ createdBefore: "2023-11-14T22:13:20.123Z" });
+    expect(await cache.get("k")).toBeNull();
+
+    seed();
+    await cache.purge({ createdBefore: 1_700_000_000_001 });
+    expect(await cache.get("k")).toBeNull();
+
+    seed();
+    await cache.purge({ createdBefore: 1_700_000_001 });
+    expect(await cache.get("k")).toBeNull();
+
+    seed();
+    const snapshot = new Map(store);
+    await expect(cache.purge({ createdBefore: "not-a-date" })).rejects.toThrow(
+      TypeError,
+    );
+    await expect(cache.purge({ createdBefore: "not-a-date" })).rejects.toThrow(
+      /createdBefore|AbsoluteTime|ISO/,
+    );
+    await expect(cache.purge({ createdBefore: Number.NaN })).rejects.toThrow(
+      TypeError,
+    );
+    await expect(
+      cache.purge({ createdBefore: Number.POSITIVE_INFINITY }),
+    ).rejects.toThrow(TypeError);
+    expect([...store.entries()]).toEqual([...snapshot.entries()]);
+  });
+
+  it("TC-C30: absolute purge keeps legacy entries without createdAt", async () => {
+    const cache = createCache();
+    store.set(
+      "legacy",
+      JSON.stringify({
+        expiresAt: Date.now() + 60_000,
+        data: "legacy",
+      } satisfies CacheEntry),
+    );
+    store.set(
+      "dated",
+      JSON.stringify({
+        expiresAt: Date.now() + 60_000,
+        data: 1,
+        createdAt: Date.parse("2020-01-01T00:00:00.000Z"),
+      } satisfies CacheEntry),
+    );
+    await cache.purge({ createdBefore: "2099-01-01T00:00:00.000Z" });
+    expect(await cache.get("legacy")).toBe("legacy");
+    expect(await cache.get("dated")).toBeNull();
+  });
+
+  it("TC-C31: mixing olderThan with absolute time throws TypeError", async () => {
+    const cache = createCache();
+    await cache.set("k", 1);
+    const snapshot = new Map(store);
+    await expect(
+      cache.purge({
+        olderThan: { seconds: 1 },
+        createdBefore: "2024-01-01T00:00:00.000Z",
+      } as never),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      cache.purge({
+        olderThan: { seconds: 1 },
+        createdBefore: "2024-01-01T00:00:00.000Z",
+      } as never),
+    ).rejects.toThrow(/olderThan/);
+    await expect(
+      cache.purge({
+        olderThan: { mins: 1 },
+        createdAfter: 0,
+      } as never),
+    ).rejects.toThrow(/createdAfter|createdBefore/);
+    expect([...store.entries()]).toEqual([...snapshot.entries()]);
+  });
+
+  it("TC-C32: invalid update/upsert ttlSeconds throws TypeError", async () => {
+    const cache = createCache();
+    await cache.set("k", 1);
+    const snapshot = new Map(store);
+    await expect(cache.update("k", 1, { ttlSeconds: -1 })).rejects.toThrow(
+      TypeError,
+    );
+    await expect(cache.update("k", 1, { ttlSeconds: -1 })).rejects.toThrow(
+      /ttlSeconds/,
+    );
+    await expect(cache.upsert("k", 1, { ttlSeconds: Number.NaN })).rejects.toThrow(
+      TypeError,
+    );
+    expect([...store.entries()]).toEqual([...snapshot.entries()]);
+  });
+
+  it("TC-LS05: absolute purge does not touch other prefixes", async () => {
+    const app = createCache({ keyPrefix: "app:" });
+    const plain = createCache();
+    const far = Date.parse("2099-01-01T00:00:00.000Z");
+    const old = Date.parse("2020-01-01T00:00:00.000Z");
+    store.set(
+      "app:k",
+      JSON.stringify({
+        expiresAt: far,
+        data: 1,
+        createdAt: old,
+      } satisfies CacheEntry),
+    );
+    store.set(
+      "k",
+      JSON.stringify({
+        expiresAt: far,
+        data: 2,
+        createdAt: old,
+      } satisfies CacheEntry),
+    );
+    await app.purge({ createdBefore: "2099-01-01T00:00:00.000Z" });
+    expect(await app.get("k")).toBeNull();
+    expect(await plain.get("k")).toBe(2);
+  });
 });
 
 describe("indexedDB backend (TC-IDB)", () => {
@@ -411,6 +723,7 @@ describe("indexedDB backend (TC-IDB)", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   async function freshCreate(options?: CreateCacheOptions) {
@@ -521,11 +834,14 @@ describe("indexedDB backend (TC-IDB)", () => {
     const cache = await freshCreate({ storage: "indexedDB", enabled: false });
     expect(await cache.get("k")).toBeNull();
     await cache.set("k", "new");
+    await cache.update("k", "upd");
+    await cache.upsert("k", "ups");
     await cache.remove("k");
     await cache.clear();
     await cache.purge({ all: true });
     await cache.purge({ keys: ["k"] });
     await cache.purge({ olderThan: { seconds: 0 } });
+    await cache.purge({ createdBefore: "2099-01-01T00:00:00.000Z" });
     const enabled = await freshCreate({ storage: "indexedDB" });
     expect(await enabled.get("k")).toBe("kept");
   });
@@ -631,6 +947,134 @@ describe("indexedDB backend (TC-IDB)", () => {
     const cache = await freshCreate({ storage: "indexedDB" });
     await cache.set("k", 1);
     await expect(cache.purge({ olderThan: {} })).rejects.toThrow(TypeError);
+    expect(await cache.get("k")).toBe(1);
+  });
+
+  it("TC-IDB06 / TC-C22: update keeps createdAt", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("k", { a: 1 });
+    const createdAt = Date.parse("2024-01-01T00:00:00.000Z");
+    const expiresAt = Date.parse("2099-01-01T00:00:00.000Z");
+    await putIdbEntry("cachian", "entries", "k", {
+      expiresAt,
+      data: { a: 1 },
+      createdAt,
+    });
+    await cache.update("k", { a: 2 });
+    const after = (await readIdbEntry(
+      "cachian",
+      "entries",
+      "k",
+    )) as CacheEntry;
+    expect(await cache.get("k")).toEqual({ a: 2 });
+    expect(after.createdAt).toBe(createdAt);
+    expect(after.expiresAt).toBe(expiresAt);
+  });
+
+  it("TC-IDB06 / TC-C25: upsert miss→set / hit→update", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.upsert("a", 1);
+    expect(await cache.get("a")).toBe(1);
+    const createdAt = Date.parse("2024-01-01T00:00:00.000Z");
+    const expiresAt = Date.parse("2099-01-01T00:00:00.000Z");
+    await putIdbEntry("cachian", "entries", "a", {
+      expiresAt,
+      data: 1,
+      createdAt,
+    });
+    await cache.upsert("a", 2);
+    const second = (await readIdbEntry(
+      "cachian",
+      "entries",
+      "a",
+    )) as CacheEntry;
+    expect(await cache.get("a")).toBe(2);
+    expect(second.createdAt).toBe(createdAt);
+    expect(second.expiresAt).toBe(expiresAt);
+  });
+
+  it("TC-IDB06 / TC-C27: createdBefore", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("old", "tmp");
+    await cache.set("mid", "tmp");
+    await cache.set("new", "tmp");
+    const far = Date.parse("2099-01-01T00:00:00.000Z");
+    await putIdbEntry("cachian", "entries", "old", {
+      expiresAt: far,
+      data: "old",
+      createdAt: Date.parse("2024-01-01T00:00:00.000Z"),
+    });
+    await putIdbEntry("cachian", "entries", "mid", {
+      expiresAt: far,
+      data: "mid",
+      createdAt: Date.parse("2024-06-01T00:00:00.000Z"),
+    });
+    await putIdbEntry("cachian", "entries", "new", {
+      expiresAt: far,
+      data: "new",
+      createdAt: Date.parse("2024-12-01T00:00:00.000Z"),
+    });
+    await cache.purge({ createdBefore: "2024-06-01T00:00:00.000Z" });
+    expect(await cache.get("old")).toBeNull();
+    expect(await cache.get("mid")).toBe("mid");
+    expect(await cache.get("new")).toBe("new");
+  });
+
+  it("TC-IDB06 / TC-C28: createdAfter / range", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("old", "tmp");
+    await cache.set("mid", "tmp");
+    await cache.set("new", "tmp");
+    const far = Date.parse("2099-01-01T00:00:00.000Z");
+    await putIdbEntry("cachian", "entries", "old", {
+      expiresAt: far,
+      data: "old",
+      createdAt: Date.parse("2024-01-01T00:00:00.000Z"),
+    });
+    await putIdbEntry("cachian", "entries", "mid", {
+      expiresAt: far,
+      data: "mid",
+      createdAt: Date.parse("2024-06-01T00:00:00.000Z"),
+    });
+    await putIdbEntry("cachian", "entries", "new", {
+      expiresAt: far,
+      data: "new",
+      createdAt: Date.parse("2024-12-01T00:00:00.000Z"),
+    });
+    await cache.purge({ createdAfter: "2024-06-01T00:00:00.000Z" });
+    expect(await cache.get("old")).toBe("old");
+    expect(await cache.get("mid")).toBe("mid");
+    expect(await cache.get("new")).toBeNull();
+  });
+
+  it("TC-IDB06 / TC-C30: absolute purge keeps legacy without createdAt", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("legacy", "tmp");
+    await cache.set("dated", "tmp");
+    const now = Date.now();
+    await putIdbEntry("cachian", "entries", "legacy", {
+      expiresAt: now + 60_000,
+      data: "legacy",
+    });
+    await putIdbEntry("cachian", "entries", "dated", {
+      expiresAt: now + 60_000,
+      data: 1,
+      createdAt: Date.parse("2020-01-01T00:00:00.000Z"),
+    });
+    await cache.purge({ createdBefore: "2099-01-01T00:00:00.000Z" });
+    expect(await cache.get("legacy")).toBe("legacy");
+    expect(await cache.get("dated")).toBeNull();
+  });
+
+  it("TC-IDB06 / TC-C31: olderThan mixed with absolute throws", async () => {
+    const cache = await freshCreate({ storage: "indexedDB" });
+    await cache.set("k", 1);
+    await expect(
+      cache.purge({
+        olderThan: { seconds: 1 },
+        createdBefore: "2024-01-01T00:00:00.000Z",
+      } as never),
+    ).rejects.toThrow(TypeError);
     expect(await cache.get("k")).toBe(1);
   });
 });
