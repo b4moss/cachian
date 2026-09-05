@@ -71,8 +71,8 @@ npm run ci:local:fallback   # npm ci && npm test && npm run build
 | `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → 集約 **Test & Build** | 予定 |
 | `.github/workflows/codeql.yml` | CodeQL（`develop`/`dev-*` PR、`main` push、週次） | 予定 |
 | `.github/workflows/scorecard.yml` | OpenSSF Scorecard（`main` + schedule） | 予定 |
-| `.github/workflows/release-on-tag.yml` | `v*` push → GitHub Release 作成 | 予定 |
-| `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | 予定 |
+| `.github/workflows/release-on-tag.yml` | `v*` push → GitHub Release 作成 | 実装済み |
+| `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | 実装済み |
 | `.github/dependabot.yml` | 週次 npm + Actions（グループ化、自動マージなし） | 予定 |
 | `.github/codeql/codeql-config.yml` | `dist/**`・`coverage/**` を除外 | 予定 |
 | `codecov.yml` | project/patch は informational、PR コメントなし | 予定 |
@@ -121,11 +121,11 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 
 ## 実装順
 
-1. **本 PR** — 方針ドキュメント + README バッジ（ワークフローは未実装、またはバッジ用に最小限）
-2. **CI スキャフォールド** — `ci.yml`、`.actrc`、`codecov.yml`、`ci:local` / `ci:local:fallback`、Dependabot
-3. **セキュリティ** — CodeQL + Scorecard
-4. **CD** — `release` ブランチ運用、`release-on-tag.yml`、`publish.yml`（npm トークン / OIDC 準備後）
-5. **ブランチ保護** — `develop` / `dev-*` で **`Test & Build`** を required に
+1. **方針ドキュメント + README バッジ** — 完了。
+2. **CI スキャフォールド** — `ci.yml`、`.actrc`、`codecov.yml`、`ci:local` / `ci:local:fallback`、Dependabot。
+3. **セキュリティ** — CodeQL + Scorecard。
+4. **CD** — `release-on-tag.yml` + `publish.yml`（本変更）。初回 `v*` タグの前にリポジトリシークレット `NPM_TOKEN` と `release` ブランチが必要。OIDC provenance は `id-token: write` を使用。
+5. **ブランチ保護** — `develop` / `dev-*` で **`Test & Build`** を required に。
 
 ## 流れ
 

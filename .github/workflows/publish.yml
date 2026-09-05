@@ -1,0 +1,183 @@
+# Publish @b4moss/cachian to npm when a GitHub Release is published for v*.
+# Tags should be created from the `release` branch. If the tag SHA already has a
+# successful CI run, Test/Build are skipped; pack + provenance publish always run.
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v1.0.0 or v1.0.0-rc.1)"
+        required: true
+        type: string
+      force_verify:
+        description: "Force Test+Build even if CI history exists for the tag SHA"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+  checks: read
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v'))
+    steps:
+      - name: Resolve tag
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="$RELEASE_TAG"
+          fi
+          case "$TAG" in
+            v*)
+              ;;
+            *)
+              echo "Unsupported tag: $TAG (expected v*)"
+              exit 1
+              ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.meta.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Require tag commit on release ancestry
+        id: ancestry
+        run: |
+          set -euo pipefail
+          if ! git fetch origin release:refs/remotes/origin/release; then
+            echo "Could not fetch origin/release."
+            echo "Create a release branch before tagging v* for publish."
+            exit 1
+          fi
+          TAG_SHA="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$TAG_SHA" origin/release; then
+            echo "Tag commit $TAG_SHA is not an ancestor of origin/release."
+            echo "Create v* tags from the release branch."
+            exit 1
+          fi
+          echo "Tag commit is on release ancestry: $TAG_SHA"
+          echo "sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check CI success history for tag SHA
+        id: ci_history
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          FORCE_VERIFY: ${{ inputs.force_verify || 'false' }}
+          TAG_SHA: ${{ steps.ancestry.outputs.sha }}
+        with:
+          script: |
+            if (process.env.FORCE_VERIFY === 'true') {
+              core.setOutput('skip_verify', 'false');
+              core.info('force_verify=true — will run Test+Build');
+              return;
+            }
+            const sha = process.env.TAG_SHA;
+            const { data: runs } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: sha,
+              status: 'completed',
+              per_page: 30,
+            });
+            const ok = (runs.workflow_runs || []).some(
+              (r) => r.name === 'CI' && r.conclusion === 'success'
+            );
+            core.setOutput('skip_verify', ok ? 'true' : 'false');
+            core.info(ok
+              ? `CI success found for ${sha} — skipping Test/Build`
+              : `No CI success for ${sha} — will run Test+Build`);
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        if: steps.ci_history.outputs.skip_verify != 'true'
+        run: npm test
+
+      - name: Build
+        if: steps.ci_history.outputs.skip_verify != 'true'
+        run: npm run build
+
+      - name: Pack
+        id: pack
+        run: |
+          set -euo pipefail
+          # Ensure dist exists even when Test/Build were skipped
+          if [ ! -d dist ]; then
+            npm run build
+          fi
+          TARBALL="$(npm pack --json | jq -r '.[0].filename')"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "Packed: $TARBALL"
+
+      - name: Inject repository.url into packed tarball
+        env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          REPO_URL: https://github.com/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TMPDIR="$(mktemp -d)"
+          tar -xzf "$TARBALL" -C "$TMPDIR"
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const pkgPath = path.join(process.argv[1], "package", "package.json");
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            const url = process.argv[2];
+            if (typeof pkg.repository === "string") {
+              pkg.repository = { type: "git", url };
+            } else {
+              pkg.repository = { ...(pkg.repository || {}), type: "git", url };
+            }
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          ' "$TMPDIR" "$REPO_URL"
+          tar -czf "$TARBALL" -C "$TMPDIR" package
+          rm -rf "$TMPDIR"
+          echo "Injected repository.url=$REPO_URL into $TARBALL"
+
+      - name: Publish to npm (provenance)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          args=(--access public --provenance)
+          # npm requires a non-latest dist-tag for prerelease versions (e.g. 1.0.0-rc.1)
+          if [[ "$version" == *-* ]]; then
+            args+=(--tag rc)
+            echo "prerelease detected (${version}); using --tag rc"
+          fi
+          npm publish "${args[@]}" "$TARBALL"
