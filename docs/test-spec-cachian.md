@@ -1,8 +1,8 @@
 # テスト仕様書: `@b4moss/cachian`（汎用ブラウザキャッシュ）
 
-対象マイルストーン: `v0.1.0`（初回公開想定）  
-関連: 実装計画（cachian パッケージ） / 抽出元 `b4moss/jp-local-gov-id` の `packages/jp-local-gov-id/src/cache.ts`  
-作業ブランチ: `cursor/cache-purge-api-12ec`（パージ API 実装）  
+対象マイルストーン: `v0.3.0`（サーバー非対応環境の生成時エラー）  
+関連: [#18 サーバーサイドでの実行をプリベント](https://github.com/b4moss/cachian/issues/18) / 抽出元 `b4moss/jp-local-gov-id` の `packages/jp-local-gov-id/src/cache.ts`  
+作業ブランチ: `cursor/prevent-server-side-d013`  
 想定実装: リポジトリルートの単一パッケージ（`src/createCache.ts` ほか）
 
 ## 1. 目的
@@ -13,7 +13,8 @@
 - 既定バックエンドは **localStorage**
 - オプションで **IndexedDB** に切り替え可能
 - 読み書きはすべて **非同期**（`Promise`）
-- エントリ形式 `{ expiresAt, data, createdAt? }`・TTL（秒）・無効化・ストレージ不可時の握りつぶしは抽出元と同等
+- **ブラウザ専用**: 選んだバックエンド API（`localStorage` / `indexedDB`）が無い環境では `createCache()` が失敗する（§3.2.1 / §5.6.1）
+- エントリ形式 `{ expiresAt, data, createdAt? }`・TTL（秒）・無効化・**操作時**のストレージ失敗握りつぶしは抽出元と同等（§5.6.2）
 - **パージ API**（全削除 / キー配列削除 / 経過時間削除）で選択的にキャッシュを捨てられる
 - **本仕様の直接対象外**: `jp-local-gov-id` への配線、CDN 配信の実行時検証、カスタム `StorageAdapter` の公開
 
@@ -29,8 +30,9 @@
 | TTL | Time To Live（秒）。`set` 時に `expiresAt = Date.now() + ttlSeconds * 1000` |
 | 論理キー | 呼び出し側が渡す `key` 文字列 |
 | 物理キー | 実際にストレージへ書くキー。`keyPrefix` がある場合は `keyPrefix + 論理キー` |
-| miss | `get` が `null` を返すこと（未保存・期限切れ・壊れたエントリ・無効化・ストレージ不可） |
+| miss | `get` が `null` を返すこと（未保存・期限切れ・壊れたエントリ・無効化・操作時のストレージ失敗） |
 | no-op | 例外を投げず、状態も変えないこと |
+| 環境非対応 | 選んだバックエンド API が `undefined`、または生成時の可用性チェックでアクセスできないこと（サーバー等）。`createCache()` が `CachianEnvironmentError` を投げる |
 | パージ | `purge(options)` による明示的な一括／選択削除。既存の `clear` / `remove` とは別メソッド |
 
 ## 3. 公開 API 契約
@@ -56,6 +58,43 @@
 | `storeName` | `string` | `"entries"` | 同上 |
 
 不正な `ttlSeconds` のエラーメッセージは `ttlSeconds` または `cacheTtlSeconds` を含む文言でよい（抽出元は `cacheTtlSeconds`）。本パッケージでは **`ttlSeconds` を含む**こと。
+
+### 3.2.1 実行環境ガード（ブラウザ専用）
+
+`createCache()` は **モジュール import 時には throw しない**。生成時に、選んだバックエンドの API が利用可能かを確認する。
+
+| 条件 | 結果 |
+|------|------|
+| `storage` 未指定または `"localStorage"` で `globalThis.localStorage` が使えない | **`CachianEnvironmentError`** |
+| `storage: "indexedDB"` で `globalThis.indexedDB` が使えない | **`CachianEnvironmentError`** |
+| 上記 API が使える（テスト用 stub / `fake-indexeddb` 含む） | 通常どおり `Cache` を返す |
+
+「使えない」の定義:
+
+- プロパティが `undefined`
+- プロパティ読み取り時に例外（既存アダプタと同様に `try/catch`）
+
+`CachianEnvironmentError`:
+
+- `Error` を継承する専用クラス（パッケージから export。呼び出し側が `instanceof` で判別できること）
+- `name` は `"CachianEnvironmentError"`
+- メッセージは次を満たすこと:
+  - ブラウザ環境が必要である旨が分かる
+  - 不足 API 名を含む（localStorage 経路は `localStorage`、IndexedDB 経路は `IndexedDB` または `indexedDB`）
+
+メッセージ例:
+
+```text
+cachian requires a browser environment with localStorage
+```
+
+```text
+cachian requires a browser environment with IndexedDB
+```
+
+不正 `ttlSeconds` の `TypeError` と混同しないこと。環境ガードは TTL 検証の前後どちらでもよいが、**ストレージへ触る前**に失敗すること。
+
+SSR（Next.js 等）では import はサーバーでも通る想定。`createCache()` の呼び出しはブラウザ（または API がある環境）に限定する。`enabled: false` は環境非対応の代替にしない（API が無ければ `enabled` に関わらず throw）。
 
 ### 3.3 `Cache` メソッド
 
@@ -218,11 +257,23 @@ createdAt != null && createdAt <= now - durationMs
 
 ### 5.6 ストレージ不可・書き込み失敗
 
-次の場合、例外を外へ投げず miss / no-op:
+本節は **環境非対応（生成時）** と **操作時失敗（握りつぶし）** を分ける。
 
-- `localStorage` / `indexedDB` が未定義、またはアクセス時に throw
+#### 5.6.1 環境非対応（`createCache` 時）
+
+次は §3.2.1 のとおり **`CachianEnvironmentError`**（miss / no-op にしない）:
+
+- 選んだバックエンドの `localStorage` / `indexedDB` が未定義
+- 生成時の可用性チェックで当該 API へのアクセスが throw
+
+一度生成に成功したインスタンスに対し、後から API が消えるケースは本仕様の必須対象外（実装は操作時 §5.6.2 に落としてよい）。
+
+#### 5.6.2 操作時の失敗（握りつぶし）
+
+API は存在するが個別操作が失敗する場合、例外を外へ投げず miss / no-op:
+
 - `setItem` / IDB put が QuotaExceeded 等で失敗
-- IndexedDB の open / upgrade 失敗
+- IndexedDB の open / upgrade 失敗（生成時チェックを通過したあとの実行時失敗）
 - `purge` / 列挙中の読み取り・削除失敗（握りつぶして続行、または全体 no-op。外へは投げない）
 
 ### 5.7 `keyPrefix`
@@ -351,15 +402,16 @@ createdAt != null && createdAt <= now - durationMs
 - **localStorage**: prefix `"app:"` のインスタンスで `set` したキーだけ消え、prefix なしで置いた他キーは残る
 - **IndexedDB**: 同一 `dbName`/`storeName` 内の全エントリが消える。別 `storeName` のインスタンスのデータは残ってよい
 
-### TC-C15: ストレージ未定義でも落ちない
+### TC-C15: ストレージ未定義なら `createCache` が `CachianEnvironmentError`
 
-- **前提**: `localStorage` または `indexedDB` を `undefined` に stub（当該バックエンド）
-- **操作**: `get` / `set` / `remove` / `has` / `clear` / `purge`
-- **期待**: reject せず、`get` は `null`、`set` / `purge` は no-op
+- **前提**: 既定（localStorage）経路。`globalThis.localStorage` を `undefined` に stub（または削除）
+- **操作**: `createCache()`
+- **期待**: `CachianEnvironmentError`（`instanceof` 可）。メッセージに `localStorage` を含み、ブラウザ環境が必要である旨が分かる
+- **期待**: ストレージへ一切書き込まない
 
-### TC-C16: 書き込み失敗を握りつぶす
+### TC-C16: 書き込み失敗を握りつぶす（§5.6.2）
 
-- **前提**: localStorage の `setItem` が throw（QuotaExceeded 相当）。IndexedDB は put 失敗を stub
+- **前提**: `createCache()` は成功済み。localStorage の `setItem` が throw（QuotaExceeded 相当）。IndexedDB は put 失敗を stub
 - **操作**: `await set("k", hugeOrAny)`
 - **期待**: reject しない
 - **期待**: 続く `get("k")` は `null`
@@ -408,6 +460,25 @@ createdAt != null && createdAt <= now - durationMs
 - **期待**: いずれも `TypeError`（メッセージに `olderThan` またはフィールド名）
 - **期待**: ストレージ内容は変わらない
 
+### TC-C22: import だけでは throw しない
+
+- **前提**: `localStorage` / `indexedDB` が未定義の環境（Node 相当）でもよい
+- **操作**: `import { createCache, CachianEnvironmentError } from "@b4moss/cachian"`（またはテスト内の同モジュール import）
+- **期待**: モジュール評価は成功する（`createCache` を呼ばなければ throw しない）
+
+### TC-C23: localStorage アクセス時 throw も環境非対応
+
+- **前提**: `localStorage` のゲッターが throw するよう stub（プライベートモード等の模擬）
+- **操作**: `createCache()`
+- **期待**: `CachianEnvironmentError`（メッセージに `localStorage`）
+
+### TC-C24: API がある環境では従来どおり生成できる
+
+- **前提**: 既存どおり Map ベースの `localStorage` stub（§4）
+- **操作**: `createCache()` および `createCache({ storage: "indexedDB" })`（後者は `fake-indexeddb` 投入後）
+- **期待**: throw せず `Cache` を返す。続く `set` / `get` は従来ケース（TC-C01 等）どおり
+
+
 ## 7. localStorage 固有（TC-LS）
 
 ### TC-LS01: 既定バックエンドが localStorage
@@ -453,9 +524,13 @@ createdAt != null && createdAt <= now - durationMs
 - **操作**: `set` 後、IDB から直接取得（テストヘルパ可）
 - **期待**: 値がオブジェクトであり、文字列の JSON 丸ごとではない（`expiresAt` / `data` / `createdAt` プロパティを持つ）
 
-### TC-IDB05: IndexedDB 不可時の miss / no-op
+### TC-IDB05: IndexedDB 未定義なら `createCache` が `CachianEnvironmentError`
 
-- TC-C15 の indexedDB 版。必須
+- **前提**: `globalThis.indexedDB` を `undefined` に stub（または削除）。`fake-indexeddb` は投入しない
+- **操作**: `createCache({ storage: "indexedDB" })`
+- **期待**: `CachianEnvironmentError`。メッセージに `IndexedDB` または `indexedDB` を含み、ブラウザ環境が必要である旨が分かる
+- **期待**: IndexedDB / localStorage へ書き込まない
+- **備考**: 既定の localStorage 経路は TC-C15。本ケースは indexedDB 指定時のみ
 
 ### TC-IDB06: 共通ケースの再実行セット
 
@@ -476,7 +551,7 @@ createdAt != null && createdAt <= now - durationMs
 
 ### TC-P01: エントリポイントから必要なシンボルを export
 
-- **期待**: `createCache` / `DEFAULT_CACHE_TTL_SECONDS` /（任意）`CACHE_TTL_MS` および公開型（`Cache` / `CacheEntry` / `CacheSetOptions` / `CreateCacheOptions` / `StorageBackend` / `CachePurgeOptions` / `CachePurgeOlderThan`）が `@b4moss/cachian` から import できる
+- **期待**: `createCache` / `CachianEnvironmentError` / `DEFAULT_CACHE_TTL_SECONDS` /（任意）`CACHE_TTL_MS` および公開型（`Cache` / `CacheEntry` / `CacheSetOptions` / `CreateCacheOptions` / `StorageBackend` / `CachePurgeOptions` / `CachePurgeOlderThan`）が `@b4moss/cachian` から import できる
 - ビルド後 `dist` の types でも同様（`npm run build` 後の型チェック、または dts 生成物の存在確認）
 
 ### TC-P02: ランタイム依存ゼロ
@@ -485,11 +560,12 @@ createdAt != null && createdAt <= now - durationMs
 
 ## 10. 受け入れ条件
 
-1. §6 の TC-C（TC-C17〜TC-C21 のパージ系を含む）を localStorage ですべてパス
+1. §6 の TC-C（TC-C15 / TC-C22〜TC-C24 の環境ガード、および TC-C17〜TC-C21 のパージ系を含む）を localStorage ですべてパス
 2. §7 の TC-LS（TC-LS04 を含む）をパス
-3. §8 の TC-IDB をパス（§8.6 の再実行セット含む）
-4. §9 の TC-P をパス
+3. §8 の TC-IDB をパス（TC-IDB05 の環境ガード、および §8.6 の再実行セットを含む）
+4. §9 の TC-P をパス（`CachianEnvironmentError` の export を含む）
 5. `npm test` および `npm run build` が CI / ローカルで成功
+6. 破壊的変更として、旧「ストレージ未定義でも miss / no-op」契約からの移行をリリースノート等で明示する
 
 ## 11. トレーサビリティ（抽出元）
 
@@ -503,5 +579,6 @@ createdAt != null && createdAt <= now - durationMs
 | URL キー前提のコメント | 任意文字列キー |
 | （なし） | `cache.purge({ all \| keys \| olderThan })` |
 | （なし） | エントリの `createdAt`（新規書き込み） |
+| （なし・握りつぶし） | 環境非対応時は `CachianEnvironmentError`（生成時。#18） |
 
 本仕様は cachian 単体の契約であり、`createLocalGovClient` のオプション名（`cache` / `cacheTtlSeconds`）の互換は **jp-local-gov-id 配線時の別仕様**とする。
