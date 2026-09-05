@@ -39,10 +39,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/b4moss/cachian"
+    "url": "git+https://github.com/b4moss/cachian.git"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4",

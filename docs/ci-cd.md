@@ -97,7 +97,7 @@ Coverage path for Codecov: `coverage/lcov.info` (single package root; not a work
 | Ancestry | Tag commit must be an ancestor of `origin/main` |
 | Verify skip | If that SHA already has CI success → skip Test/Build; always pack + provenance publish |
 | Dist-tag | Prerelease versions (`*-rc.*` etc.) publish with `--tag rc`; otherwise `latest` |
-| Auth | npm **Trusted Publishing** (OIDC). Configure on npmjs.com → package → Trusted Publisher: GitHub org `b4moss`, repo `cachian`, workflow `publish.yml`. No `NPM_TOKEN` secret. Requires `id-token: write`, Node 24, npm ≥ 11.5.1 |
+| Auth | npm **Trusted Publishing** (OIDC). Configure on npmjs.com → package → Trusted Publisher: GitHub org `b4moss`, repo `cachian`, workflow `publish.yml` (note: sibling repos use `publish-npm.yml` — the filename must match exactly). No `NPM_TOKEN` secret. Requires `id-token: write`, Node 24, npm ≥ 11.5.1 |
 
 Create `v*` tags from the **`main`** branch only.
 
