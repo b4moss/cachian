@@ -1,6 +1,6 @@
 {
   "name": "@b4moss/cachian",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Universal browser cache helper with localStorage and IndexedDB backends",
   "type": "module",
   "main": "./dist/cachian.cjs",
