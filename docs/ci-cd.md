@@ -71,8 +71,8 @@ Do not open or update a PR while this gate is failing.
 | `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → aggregate **Test & Build** | Planned |
 | `.github/workflows/codeql.yml` | CodeQL on PR to `develop`/`dev-*`, push to `main`, weekly | Planned |
 | `.github/workflows/scorecard.yml` | OpenSSF Scorecard on `main` + schedule | Planned |
-| `.github/workflows/release-on-tag.yml` | Push `v*` → create GitHub Release | Planned |
-| `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | Planned |
+| `.github/workflows/release-on-tag.yml` | Push `v*` → create GitHub Release | Implemented |
+| `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | Implemented |
 | `.github/dependabot.yml` | Weekly npm + Actions updates (grouped, no auto-merge) | Planned |
 | `.github/codeql/codeql-config.yml` | Ignore `dist/**`, `coverage/**` | Planned |
 | `codecov.yml` | Project/patch informational; no PR comment | Planned |
@@ -100,7 +100,7 @@ Coverage path for Codecov: `coverage/lcov.info` (single package root; not a work
 | Ancestry | Tag commit must be an ancestor of `origin/release` |
 | Verify skip | If that SHA already has CI success → skip Test/Build; always pack + provenance publish |
 | Dist-tag | Prerelease versions (`*-rc.*` etc.) publish with `--tag rc`; otherwise `latest` |
-| Auth | `NPM_TOKEN` + OIDC provenance (`id-token: write`) |
+| Auth | npm **Trusted Publishing** (OIDC). Configure on npmjs.com → package → Trusted Publisher: GitHub org `b4moss`, repo `cachian`, workflow `publish.yml`. No `NPM_TOKEN` secret. Requires `id-token: write`, Node 24, npm ≥ 11.5.1 |
 
 Create `v*` tags from the **`release`** branch only.
 
@@ -121,10 +121,10 @@ Until workflows run and the package is published, some badges may show unknown/e
 
 ## Implementation order
 
-1. **This PR** — direction docs + README badges (no workflows yet, or minimal stubs only if needed for badge URLs).
+1. **Direction docs + README badges** — done.
 2. **CI scaffold** — `ci.yml`, `.actrc`, `codecov.yml`, `package.json` scripts `ci:local` / `ci:local:fallback`, Dependabot.
 3. **Security** — CodeQL + Scorecard.
-4. **CD** — `release` branch convention, `release-on-tag.yml`, `publish.yml` (after npm org token / OIDC is ready).
+4. **CD** — `release-on-tag.yml` + `publish.yml` (this change). Before the first `v*` tag: create a `release` branch, and on npmjs.com add a Trusted Publisher for `@b4moss/cachian` pointing at GitHub org `b4moss` / repo `cachian` / workflow `publish.yml`. No repo `NPM_TOKEN` secret.
 5. **Branch protection** — require check name **`Test & Build`** on `develop` / `dev-*`.
 
 ## Quick reference

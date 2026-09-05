@@ -1,9 +1,10 @@
-import { isExpired, makeEntry, resolveTtlMs } from "./entry";
+import { isExpired, makeEntry, resolveOlderThanMs, resolveTtlMs } from "./entry";
 import { createIndexedDBAdapter } from "./storage/indexedDB";
 import { createLocalStorageAdapter } from "./storage/localStorage";
 import type { StorageAdapter } from "./storage/types";
 import type {
   Cache,
+  CachePurgeOptions,
   CacheSetOptions,
   CreateCacheOptions,
 } from "./types";
@@ -67,6 +68,33 @@ export function createCache(options: CreateCacheOptions = {}): Cache {
     async clear() {
       if (!enabled) return;
       await adapter.clear(keyPrefix);
+    },
+
+    async purge(purgeOptions: CachePurgeOptions) {
+      if (!enabled) return;
+
+      if ("all" in purgeOptions && purgeOptions.all === true) {
+        await adapter.clear(keyPrefix);
+        return;
+      }
+
+      if ("keys" in purgeOptions) {
+        for (const key of purgeOptions.keys) {
+          await adapter.remove(physical(key));
+        }
+        return;
+      }
+
+      if ("olderThan" in purgeOptions) {
+        const durationMs = resolveOlderThanMs(purgeOptions.olderThan);
+        const threshold = Date.now() - durationMs;
+        const listed = await adapter.list(keyPrefix);
+        for (const { physicalKey, entry } of listed) {
+          if (entry.createdAt != null && entry.createdAt <= threshold) {
+            await adapter.remove(physicalKey);
+          }
+        }
+      }
     },
   };
 }

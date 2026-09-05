@@ -156,5 +156,61 @@ export function createIndexedDBAdapter(
     async clear(_keyPrefix) {
       await withStore(dbName, storeName, "readwrite", (store) => store.clear());
     },
+
+    async list(keyPrefix) {
+      const db = await openDb(dbName, storeName);
+      if (!db) return [];
+
+      return new Promise<Array<{ physicalKey: string; entry: CacheEntry }>>(
+        (resolve) => {
+          try {
+            const tx = db.transaction(storeName, "readwrite");
+            const store = tx.objectStore(storeName);
+            const cursorReq = store.openCursor();
+            const results: Array<{ physicalKey: string; entry: CacheEntry }> =
+              [];
+
+            cursorReq.onerror = () => {
+              db.close();
+              resolve([]);
+            };
+            cursorReq.onsuccess = () => {
+              const cursor = cursorReq.result;
+              if (!cursor) return;
+              const key = cursor.key;
+              if (typeof key === "string" && key.startsWith(keyPrefix)) {
+                const value = cursor.value;
+                if (isCacheEntry(value)) {
+                  results.push({ physicalKey: key, entry: value });
+                } else {
+                  cursor.delete();
+                }
+              }
+              cursor.continue();
+            };
+
+            tx.oncomplete = () => {
+              db.close();
+              resolve(results);
+            };
+            tx.onerror = () => {
+              db.close();
+              resolve([]);
+            };
+            tx.onabort = () => {
+              db.close();
+              resolve([]);
+            };
+          } catch {
+            try {
+              db.close();
+            } catch {
+              // ignore
+            }
+            resolve([]);
+          }
+        },
+      );
+    },
   };
 }
