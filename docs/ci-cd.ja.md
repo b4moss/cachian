@@ -71,8 +71,8 @@ npm run ci:local:fallback   # npm ci && npm test && npm run build
 | `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → 集約 **Test & Build** | 予定 |
 | `.github/workflows/codeql.yml` | CodeQL（`develop`/`dev-*` PR、`main` push、週次） | 予定 |
 | `.github/workflows/scorecard.yml` | OpenSSF Scorecard（`main` + schedule） | 予定 |
-| `.github/workflows/release-on-tag.yml` | `v*` push → GitHub Release 作成 | 予定 |
-| `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | 予定 |
+| `.github/workflows/release-on-tag.yml` | `v*` push → GitHub Release 作成 | 実装済み |
+| `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | 実装済み |
 | `.github/dependabot.yml` | 週次 npm + Actions（グループ化、自動マージなし） | 予定 |
 | `.github/codeql/codeql-config.yml` | `dist/**`・`coverage/**` を除外 | 予定 |
 | `codecov.yml` | project/patch は informational、PR コメントなし | 予定 |
@@ -100,7 +100,7 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 | 祖先チェック | タグのコミットが `origin/release` の祖先であること |
 | 検証スキップ | その SHA に CI success があれば Test/Build 省略。pack + provenance publish は常に実行 |
 | dist-tag | プレリリース（`*-rc.*` 等）は `--tag rc`、それ以外は `latest` |
-| 認証 | `NPM_TOKEN` + OIDC provenance（`id-token: write`） |
+| 認証 | npm **Trusted Publishing**（OIDC）。npmjs.com → パッケージ → Trusted Publisher で GitHub org `b4moss`・repo `cachian`・workflow `publish.yml` を指定。`NPM_TOKEN` シークレットは使わない。`id-token: write`、Node 24、npm ≥ 11.5.1 が必要 |
 
 `v*` タグは **`release` ブランチから**打つ。
 
@@ -121,11 +121,11 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 
 ## 実装順
 
-1. **本 PR** — 方針ドキュメント + README バッジ（ワークフローは未実装、またはバッジ用に最小限）
-2. **CI スキャフォールド** — `ci.yml`、`.actrc`、`codecov.yml`、`ci:local` / `ci:local:fallback`、Dependabot
-3. **セキュリティ** — CodeQL + Scorecard
-4. **CD** — `release` ブランチ運用、`release-on-tag.yml`、`publish.yml`（npm トークン / OIDC 準備後）
-5. **ブランチ保護** — `develop` / `dev-*` で **`Test & Build`** を required に
+1. **方針ドキュメント + README バッジ** — 完了。
+2. **CI スキャフォールド** — `ci.yml`、`.actrc`、`codecov.yml`、`ci:local` / `ci:local:fallback`、Dependabot。
+3. **セキュリティ** — CodeQL + Scorecard。
+4. **CD** — `release-on-tag.yml` + `publish.yml`（本変更）。初回 `v*` タグの前に `release` ブランチを作成し、npmjs.com で `@b4moss/cachian` の Trusted Publisher に GitHub org `b4moss` / repo `cachian` / workflow `publish.yml` を登録する。リポジトリの `NPM_TOKEN` シークレットは不要。
+5. **ブランチ保護** — `develop` / `dev-*` で **`Test & Build`** を required に。
 
 ## 流れ
 
