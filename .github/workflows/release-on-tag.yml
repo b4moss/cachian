@@ -1,6 +1,6 @@
 # Create a GitHub Release when a v* tag is pushed.
-# Operational rule: create these tags from the `release` branch so Publish
-# (publish.yml) can verify ancestry and reuse CI success for the tag SHA.
+# Operational rule: create these tags from `main` so Publish (publish.yml) can
+# verify ancestry and reuse CI success for the tag SHA.
 #
 # Tag naming: use semver (optionally with prerelease dots), e.g. v1.0.0 or v1.0.0-rc.1
 name: Release on tag
@@ -44,8 +44,8 @@ jobs:
 
           NOTES="Automated release for tag \`$TAG\`.
 
-          Create \`v*\` tags from the \`release\` branch so Publish can verify
-          ancestry and reuse a successful CI run for the tag SHA."
+          Create \`v*\` tags from \`main\` so Publish can verify ancestry and
+          reuse a successful CI run for the tag SHA."
 
           gh release create "$TAG" \
             --title "$TAG" \
