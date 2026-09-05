@@ -55,6 +55,16 @@ const cache = createCache({
 
 保存形式は `{ expiresAt: number, data: unknown, createdAt?: number }`（localStorage は JSON 文字列、IndexedDB はオブジェクト）。新規 `set` では必ず `createdAt` を付与します。
 
+### 書き込み: `set` / `update` / `upsert`
+
+```ts
+await cache.set("k", value); // 常に新規エントリ（createdAt / expiresAt を再生成）
+await cache.update("k", value); // 有効な既存があるときだけ更新。なければ no-op
+await cache.upsert("k", value); // 無ければ set、有れば update
+```
+
+`update` / hit 時の `upsert` は `createdAt` を維持します。`ttlSeconds` 未指定なら `expiresAt` も維持します。
+
 ### パージ
 
 ```ts
@@ -66,9 +76,17 @@ await cache.purge({ keys: ["a", "b"] });
 
 // 指定期間より古いエントリだけ削除（固定換算: year=365日, month=30日）
 await cache.purge({ olderThan: { hours: 1, mins: 30 } });
+
+// 絶対時刻（ISO 8601、またはエポック秒／ミリ秒の数値）
+await cache.purge({ createdBefore: "2024-06-01T00:00:00.000Z" });
+await cache.purge({ createdAfter: 1_700_000_000_000 });
+await cache.purge({
+  createdAfter: "2024-01-01T00:00:00.000Z",
+  createdBefore: "2024-12-01T00:00:00.000Z",
+});
 ```
 
-`createdAt` の無い旧エントリは `olderThan` では残ります（消す場合は `all` または `keys` を使います）。
+`createdAt` の無い旧エントリは `olderThan` および絶対時刻モードでは残ります（消す場合は `all` または `keys` を使います）。`olderThan` と `createdBefore` / `createdAfter` の混在は `TypeError` になります。
 
 ## ライセンス
 
