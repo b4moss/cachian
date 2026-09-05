@@ -100,7 +100,7 @@ Coverage path for Codecov: `coverage/lcov.info` (single package root; not a work
 | Ancestry | Tag commit must be an ancestor of `origin/release` |
 | Verify skip | If that SHA already has CI success → skip Test/Build; always pack + provenance publish |
 | Dist-tag | Prerelease versions (`*-rc.*` etc.) publish with `--tag rc`; otherwise `latest` |
-| Auth | `NPM_TOKEN` + OIDC provenance (`id-token: write`) |
+| Auth | npm **Trusted Publishing** (OIDC). Configure on npmjs.com → package → Trusted Publisher: GitHub org `b4moss`, repo `cachian`, workflow `publish.yml`. No `NPM_TOKEN` secret. Requires `id-token: write`, Node 24, npm ≥ 11.5.1 |
 
 Create `v*` tags from the **`release`** branch only.
 
@@ -124,7 +124,7 @@ Until workflows run and the package is published, some badges may show unknown/e
 1. **Direction docs + README badges** — done.
 2. **CI scaffold** — `ci.yml`, `.actrc`, `codecov.yml`, `package.json` scripts `ci:local` / `ci:local:fallback`, Dependabot.
 3. **Security** — CodeQL + Scorecard.
-4. **CD** — `release-on-tag.yml` + `publish.yml` (this change). Requires repo secret `NPM_TOKEN` and a `release` branch before the first `v*` tag. OIDC provenance uses `id-token: write`.
+4. **CD** — `release-on-tag.yml` + `publish.yml` (this change). Before the first `v*` tag: create a `release` branch, and on npmjs.com add a Trusted Publisher for `@b4moss/cachian` pointing at GitHub org `b4moss` / repo `cachian` / workflow `publish.yml`. No repo `NPM_TOKEN` secret.
 5. **Branch protection** — require check name **`Test & Build`** on `develop` / `dev-*`.
 
 ## Quick reference
