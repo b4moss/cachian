@@ -1,5 +1,11 @@
 import { assertStorageAvailable } from "./environment";
-import { isExpired, makeEntry, resolveOlderThanMs, resolveTtlMs } from "./entry";
+import {
+  isExpired,
+  makeEntry,
+  parseAbsoluteTime,
+  resolveOlderThanMs,
+  resolveTtlMs,
+} from "./entry";
 import { createIndexedDBAdapter } from "./storage/indexedDB";
 import { createLocalStorageAdapter } from "./storage/localStorage";
 import type { StorageAdapter } from "./storage/types";
