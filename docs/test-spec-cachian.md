@@ -153,6 +153,7 @@ createdAt != null && createdAt <= now - durationMs
 - `durationMs === 0`（例: `{ seconds: 0 }` のみ）は、`createdAt <= now` のエントリ（実質、`createdAt` 付きの全件）を削除対象とする
 - 期限切れ（`expiresAt`）とは独立。期限切れでも `createdAt` が新しければ残るし、有効でも古ければ消える
 - 戻り値は常に `Promise<void>`（削除件数は返さない）
+
 ## 4. テスト方針
 
 実装先の目安:
