@@ -1,4 +1,4 @@
-import { parseAbsoluteTime, resolveOlderThanMs } from "../entry";
+import { isExpired, parseAbsoluteTime, resolveOlderThanMs } from "../entry";
 import type { MethodDef } from "../core/types";
 import type {
   AbsoluteTime,
@@ -19,9 +19,25 @@ export const purge: MethodDef<{
       async purge(purgeOptions: CachePurgeOptions) {
         if (!ctx.enabled) return;
 
+        const hasExpired =
+          hasOwn(purgeOptions, "expired") &&
+          (purgeOptions as { expired?: unknown }).expired === true;
+        const hasAll =
+          hasOwn(purgeOptions, "all") &&
+          (purgeOptions as { all?: unknown }).all === true;
+        const hasKeys = hasOwn(purgeOptions, "keys");
         const hasOlderThan = hasOwn(purgeOptions, "olderThan");
         const hasCreatedBefore = hasOwn(purgeOptions, "createdBefore");
         const hasCreatedAfter = hasOwn(purgeOptions, "createdAfter");
+
+        if (
+          hasExpired &&
+          (hasAll || hasKeys || hasOlderThan || hasCreatedBefore || hasCreatedAfter)
+        ) {
+          throw new TypeError(
+            "purge cannot mix expired with all/keys/olderThan/createdBefore/createdAfter",
+          );
+        }
 
         if (hasOlderThan && (hasCreatedBefore || hasCreatedAfter)) {
           throw new TypeError(
@@ -29,13 +45,23 @@ export const purge: MethodDef<{
           );
         }
 
-        if ("all" in purgeOptions && purgeOptions.all === true) {
+        if (hasExpired) {
+          const listed = await ctx.driver.list(ctx.keyPrefix);
+          for (const { physicalKey, entry } of listed) {
+            if (isExpired(entry)) {
+              await ctx.driver.remove(physicalKey);
+            }
+          }
+          return;
+        }
+
+        if (hasAll) {
           await ctx.driver.clear(ctx.keyPrefix);
           return;
         }
 
-        if ("keys" in purgeOptions) {
-          for (const key of purgeOptions.keys) {
+        if (hasKeys) {
+          for (const key of (purgeOptions as { keys: string[] }).keys) {
             await ctx.driver.remove(ctx.physical(key));
           }
           return;

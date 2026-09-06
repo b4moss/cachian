@@ -101,9 +101,10 @@ await cache.purge({ all: true });
 await cache.purge({ keys: ["a", "b"] });
 await cache.purge({ olderThan: { hours: 1, mins: 30 } });
 await cache.purge({ createdBefore: "2024-06-01T00:00:00.000Z" });
+await cache.purge({ expired: true });
 ```
 
-Legacy entries without `createdAt` are left alone by `olderThan` and absolute-time modes. Mixing `olderThan` with `createdBefore` / `createdAfter` throws `TypeError`.
+Legacy entries without `createdAt` are left alone by `olderThan` and absolute-time modes, but **are removed** by `{ expired: true }` when `expiresAt` is past. Mixing `olderThan` with `createdBefore` / `createdAfter`, or mixing `{ expired: true }` with any other mode, throws `TypeError`.
 
 ## Breaking changes (v0.4)
 

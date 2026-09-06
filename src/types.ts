@@ -28,7 +28,8 @@ export type CachePurgeOptions =
   | { keys: string[] }
   | { olderThan: CachePurgeOlderThan }
   | { createdBefore: AbsoluteTime; createdAfter?: AbsoluteTime }
-  | { createdAfter: AbsoluteTime; createdBefore?: AbsoluteTime };
+  | { createdAfter: AbsoluteTime; createdBefore?: AbsoluteTime }
+  | { expired: true };
 
 export type CacheEntry = {
   expiresAt: number;

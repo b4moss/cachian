@@ -783,6 +783,132 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect(await app.get("k")).toBeNull();
     expect(await plain.get("k")).toBe(2);
   });
+
+  it("TC-C36: purge({ expired: true }) removes only expired entries", async () => {
+    const cache = createTestCache();
+    const now = Date.now();
+    store.set(
+      "dead",
+      JSON.stringify({
+        expiresAt: now - 1,
+        data: "dead",
+        createdAt: now - 1000,
+      } satisfies CacheEntry),
+    );
+    store.set(
+      "live",
+      JSON.stringify({
+        expiresAt: now + 60_000,
+        data: "live",
+        createdAt: now,
+      } satisfies CacheEntry),
+    );
+    await expect(cache.purge({ expired: true })).resolves.toBeUndefined();
+    expect(store.has("dead")).toBe(false);
+    expect(await cache.get("live")).toBe("live");
+  });
+
+  it("TC-C37: purge({ expired: true }) removes legacy expired entries", async () => {
+    const cache = createTestCache();
+    const now = Date.now();
+    store.set(
+      "legacy",
+      JSON.stringify({
+        expiresAt: now - 1,
+        data: "legacy",
+      } satisfies CacheEntry),
+    );
+    store.set(
+      "live",
+      JSON.stringify({
+        expiresAt: now + 60_000,
+        data: "live",
+        createdAt: now,
+      } satisfies CacheEntry),
+    );
+    await cache.purge({ expired: true });
+    expect(store.has("legacy")).toBe(false);
+    expect(await cache.get("live")).toBe("live");
+  });
+
+  it("TC-C38: purge({ expired: true }) is no-op when nothing expired", async () => {
+    const cache = createTestCache();
+    await cache.set("a", 1);
+    await cache.set("b", 2);
+    const snapshot = new Map(store);
+    await cache.purge({ expired: true });
+    expect([...store.entries()]).toEqual([...snapshot.entries()]);
+    expect(await cache.get("a")).toBe(1);
+    expect(await cache.get("b")).toBe(2);
+  });
+
+  it("TC-C39: mixing expired with other purge modes throws TypeError", async () => {
+    const cache = createTestCache();
+    await cache.set("k", 1);
+    const snapshot = new Map(store);
+    await expect(
+      cache.purge({ expired: true, all: true } as never),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      cache.purge({ expired: true, all: true } as never),
+    ).rejects.toThrow(/expired/);
+    await expect(
+      cache.purge({ expired: true, keys: ["a"] } as never),
+    ).rejects.toThrow(/expired/);
+    await expect(
+      cache.purge({ expired: true, olderThan: { seconds: 1 } } as never),
+    ).rejects.toThrow(/expired/);
+    await expect(
+      cache.purge({
+        expired: true,
+        createdBefore: "2024-01-01T00:00:00.000Z",
+      } as never),
+    ).rejects.toThrow(/expired/);
+    await expect(
+      cache.purge({ expired: true, createdAfter: 0 } as never),
+    ).rejects.toThrow(/expired/);
+    expect([...store.entries()]).toEqual([...snapshot.entries()]);
+  });
+
+  it("TC-C40: enabled false makes purge({ expired: true }) a no-op", async () => {
+    const now = Date.now();
+    store.set(
+      "dead",
+      JSON.stringify({
+        expiresAt: now - 1,
+        data: "dead",
+        createdAt: now - 1000,
+      } satisfies CacheEntry),
+    );
+    const snapshot = new Map(store);
+    const cache = createTestCache({ enabled: false });
+    await cache.purge({ expired: true });
+    expect([...store.entries()]).toEqual([...snapshot.entries()]);
+  });
+
+  it("TC-LS06: purge({ expired: true }) does not touch other prefixes", async () => {
+    const app = createTestCache({ keyPrefix: "app:" });
+    const now = Date.now();
+    store.set(
+      "app:dead",
+      JSON.stringify({
+        expiresAt: now - 1,
+        data: 1,
+        createdAt: now - 1000,
+      } satisfies CacheEntry),
+    );
+    store.set(
+      "dead",
+      JSON.stringify({
+        expiresAt: now - 1,
+        data: 2,
+        createdAt: now - 1000,
+      } satisfies CacheEntry),
+    );
+    await app.purge({ expired: true });
+    expect(store.has("app:dead")).toBe(false);
+    expect(store.has("dead")).toBe(true);
+  });
 });
 
 describe("indexedDB backend (TC-IDB)", () => {
@@ -1123,6 +1249,58 @@ describe("indexedDB backend (TC-IDB)", () => {
         createdBefore: "2024-01-01T00:00:00.000Z",
       } as never),
     ).rejects.toThrow(TypeError);
+    expect(await cache.get("k")).toBe(1);
+  });
+
+  it("TC-IDB06 / TC-C36: purge expired removes only expired", async () => {
+    const cache = await freshCreate();
+    await cache.set("dead", "tmp");
+    await cache.set("live", "tmp");
+    const now = Date.now();
+    await putIdbEntry("cachian", "entries", "dead", {
+      expiresAt: now - 1,
+      data: "dead",
+      createdAt: now - 1000,
+    });
+    await putIdbEntry("cachian", "entries", "live", {
+      expiresAt: now + 60_000,
+      data: "live",
+      createdAt: now,
+    });
+    await cache.purge({ expired: true });
+    expect(await cache.get("dead")).toBeNull();
+    expect(await cache.get("live")).toBe("live");
+    expect(await readIdbEntry("cachian", "entries", "dead")).toBeUndefined();
+  });
+
+  it("TC-IDB06 / TC-C37: purge expired removes legacy expired", async () => {
+    const cache = await freshCreate();
+    await cache.set("legacy", "tmp");
+    await cache.set("live", "tmp");
+    const now = Date.now();
+    await putIdbEntry("cachian", "entries", "legacy", {
+      expiresAt: now - 1,
+      data: "legacy",
+    });
+    await putIdbEntry("cachian", "entries", "live", {
+      expiresAt: now + 60_000,
+      data: "live",
+      createdAt: now,
+    });
+    await cache.purge({ expired: true });
+    expect(await readIdbEntry("cachian", "entries", "legacy")).toBeUndefined();
+    expect(await cache.get("live")).toBe("live");
+  });
+
+  it("TC-IDB06 / TC-C39: expired mixed with other modes throws", async () => {
+    const cache = await freshCreate();
+    await cache.set("k", 1);
+    await expect(
+      cache.purge({ expired: true, olderThan: { seconds: 1 } } as never),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      cache.purge({ expired: true, olderThan: { seconds: 1 } } as never),
+    ).rejects.toThrow(/expired/);
     expect(await cache.get("k")).toBe(1);
   });
 });
