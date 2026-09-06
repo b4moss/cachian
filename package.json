@@ -1,18 +1,69 @@
 {
   "name": "@b4moss/cachian",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Universal browser cache helper with localStorage and IndexedDB backends",
   "type": "module",
-  "main": "./dist/cachian.cjs",
-  "module": "./dist/cachian.js",
-  "types": "./dist/src/index.d.ts",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "unpkg": "./dist/cachian.iife.min.js",
   "jsdelivr": "./dist/cachian.iife.min.js",
   "exports": {
     ".": {
-      "types": "./dist/src/index.d.ts",
-      "import": "./dist/cachian.js",
-      "require": "./dist/cachian.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./drivers/localStorage": {
+      "types": "./dist/drivers/localStorage.d.ts",
+      "import": "./dist/drivers/localStorage.js",
+      "require": "./dist/drivers/localStorage.cjs"
+    },
+    "./drivers/indexedDB": {
+      "types": "./dist/drivers/indexedDB.d.ts",
+      "import": "./dist/drivers/indexedDB.js",
+      "require": "./dist/drivers/indexedDB.cjs"
+    },
+    "./methods/get": {
+      "types": "./dist/methods/get.d.ts",
+      "import": "./dist/methods/get.js",
+      "require": "./dist/methods/get.cjs"
+    },
+    "./methods/set": {
+      "types": "./dist/methods/set.d.ts",
+      "import": "./dist/methods/set.js",
+      "require": "./dist/methods/set.cjs"
+    },
+    "./methods/update": {
+      "types": "./dist/methods/update.d.ts",
+      "import": "./dist/methods/update.js",
+      "require": "./dist/methods/update.cjs"
+    },
+    "./methods/upsert": {
+      "types": "./dist/methods/upsert.d.ts",
+      "import": "./dist/methods/upsert.js",
+      "require": "./dist/methods/upsert.cjs"
+    },
+    "./methods/remove": {
+      "types": "./dist/methods/remove.d.ts",
+      "import": "./dist/methods/remove.js",
+      "require": "./dist/methods/remove.cjs"
+    },
+    "./methods/has": {
+      "types": "./dist/methods/has.d.ts",
+      "import": "./dist/methods/has.js",
+      "require": "./dist/methods/has.cjs"
+    },
+    "./methods/clear": {
+      "types": "./dist/methods/clear.d.ts",
+      "import": "./dist/methods/clear.js",
+      "require": "./dist/methods/clear.cjs"
+    },
+    "./methods/purge": {
+      "types": "./dist/methods/purge.d.ts",
+      "import": "./dist/methods/purge.js",
+      "require": "./dist/methods/purge.cjs"
     }
   },
   "files": [

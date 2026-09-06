@@ -1,16 +1,17 @@
 export type {
   AbsoluteTime,
-  Cache,
   CacheEntry,
   CachePurgeOlderThan,
   CachePurgeOptions,
   CacheSetOptions,
+} from "./types";
+export { CACHE_TTL_MS, DEFAULT_CACHE_TTL_SECONDS } from "./types";
+export type {
+  CacheContext,
+  CacheFromMethods,
   CreateCacheOptions,
-  StorageBackend,
-} from "./types";
-export {
-  CACHE_TTL_MS,
-  DEFAULT_CACHE_TTL_SECONDS,
-} from "./types";
+  MethodDef,
+  UnionToIntersection,
+} from "./core/types";
+export { createCache } from "./core/createCache";
 export { CachianEnvironmentError } from "./environment";
-export { createCache } from "./createCache";
