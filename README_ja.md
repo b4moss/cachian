@@ -101,9 +101,10 @@ await cache.purge({ all: true });
 await cache.purge({ keys: ["a", "b"] });
 await cache.purge({ olderThan: { hours: 1, mins: 30 } });
 await cache.purge({ createdBefore: "2024-06-01T00:00:00.000Z" });
+await cache.purge({ expired: true });
 ```
 
-`createdAt` の無い旧エントリは `olderThan` および絶対時刻モードでは残ります。`olderThan` と `createdBefore` / `createdAfter` の混在は `TypeError` になります。
+`createdAt` の無い旧エントリは `olderThan` および絶対時刻モードでは残りますが、`{ expired: true }` では `expiresAt` が過去なら **削除されます**。`olderThan` と `createdBefore` / `createdAfter` の混在、および `{ expired: true }` と他モードの混在は `TypeError` になります。
 
 ## 破壊的変更（v0.4）
 
