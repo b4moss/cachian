@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
-const entry = resolve(import.meta.dirname, "src/index.ts");
+const entry = resolve(import.meta.dirname, "src/cdn.ts");
 
 export default defineConfig(({ mode }) => {
   const minify = mode === "minify";

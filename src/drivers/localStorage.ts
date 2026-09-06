@@ -1,3 +1,4 @@
+import { assertStorageAvailable } from "../environment";
 import { isCacheEntry } from "../entry";
 import type { CacheEntry } from "../types";
 import type { StorageAdapter } from "./types";
@@ -11,7 +12,7 @@ function getLocalStorage(): Storage | null {
   }
 }
 
-export function createLocalStorageAdapter(): StorageAdapter {
+function createLocalStorageAdapter(): StorageAdapter {
   return {
     async get(physicalKey) {
       const storage = getLocalStorage();
@@ -110,4 +111,10 @@ export function createLocalStorageAdapter(): StorageAdapter {
       return results;
     },
   };
+}
+
+/** Create a localStorage-backed storage adapter. Throws if unavailable. */
+export function localStorageDriver(): StorageAdapter {
+  assertStorageAvailable("localStorage");
+  return createLocalStorageAdapter();
 }
