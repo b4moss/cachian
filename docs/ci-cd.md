@@ -26,12 +26,13 @@ feature/* / cursor/*
   PR → develop / dev-*     ← CI (Gate → Test ‖ Build → "Test & Build")
         │
         ▼
-      main                 ← Scorecard; stable default; tags v* only from here
+      main                 ← Codecov upload; Scorecard; stable default; tags v* only from here
 ```
 
 - Day-to-day integration: `develop` (and versioned `dev-*` when needed).
 - Release cut: merge into `main`, then tag `vX.Y.Z` (or prerelease `vX.Y.Z-rc.N`) on `main`.
 - Do **not** rely on CI for PRs into `main` (same rule as the reference for stable branches).
+- Codecov runs **only** on push to `main` (i.e. after merge into `main`), not on PR CI.
 
 ## Local gate (required before PR)
 
@@ -45,7 +46,7 @@ npm run ci:local
 act pull_request -W .github/workflows/ci.yml
 ```
 
-Defaults live in [`.actrc`](../.actrc). Under `act`, the CI gate always runs Test/Build (`ACT=true`). Codecov is skipped when `ACT` is set.
+Defaults live in [`.actrc`](../.actrc). Under `act`, the CI gate always runs Test/Build (`ACT=true`). Codecov is a separate `main`-only workflow and is not part of local `act`.
 
 Without Docker (some Cloud Agent environments):
 
@@ -65,7 +66,8 @@ Do not open or update a PR while this gate is failing.
 
 | File | Role | Status |
 |------|------|--------|
-| `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → aggregate **Test & Build** | Implemented |
+| `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → aggregate **Test & Build** (no Codecov upload) | Implemented |
+| `.github/workflows/codecov.yml` | Push to `main` → test + upload `coverage/lcov.info` to Codecov | Implemented |
 | `.github/workflows/codeql.yml` | CodeQL on PR to `develop`/`dev-*`, push to `main`, weekly | Planned |
 | `.github/workflows/scorecard.yml` | OpenSSF Scorecard on `main` + schedule | Implemented |
 | `.github/workflows/release-on-tag.yml` | Push `v*` → create GitHub Release | Implemented |
@@ -87,7 +89,17 @@ Do not open or update a PR while this gate is failing.
 | Required check name | Aggregate job **`Test & Build`** |
 | Node | `24` (engines `>=24`), `npm ci`, pin Actions by SHA |
 
-Coverage path for Codecov: `coverage/lcov.info` (single package root; not a workspace path).
+### Codecov (main only)
+
+| Item | Rule |
+|------|------|
+| Trigger | `push` to `main` (merge into `main`) |
+| Not triggered | PR CI (`ci.yml`); push to other branches |
+| Steps | `npm ci` → `npm test` → upload `coverage/lcov.info` |
+| Auth | Optional `CODECOV_TOKEN`; OIDC via `id-token: write` |
+| Status | Informational (`codecov.yml`); `fail_ci_if_error: false` |
+
+Coverage path: `coverage/lcov.info` (single package root; not a workspace path). README Coverage badge reads the default branch (`main`).
 
 ### CD — npm publish
 
@@ -130,5 +142,6 @@ Until workflows run and the package is published, some badges may show unknown/e
 local change → npm run ci:local (must pass)
             → open PR to develop / dev-*
             → CI Gate → Test ‖ Build → "Test & Build"
+merge → main → Codecov upload (coverage for badge)
 tag v* on main → Release → Publish (reuse CI or re-verify) → npm
 ```
