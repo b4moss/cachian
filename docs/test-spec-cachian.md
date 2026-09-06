@@ -1,9 +1,10 @@
 # テスト仕様書: `@b4moss/cachian`（汎用ブラウザキャッシュ）
 
-対象マイルストーン: `v0.4.0`（ドライバ／メソッド分割・破壊的変更）  
-関連: 抽出元 `b4moss/jp-local-gov-id` のキャッシュロジック / モジュール化（core + drivers + methods）  
-作業ブランチ: `cursor/modular-drivers-methods-e9a9`  
-想定実装: リポジトリルートの単一パッケージ（`src/core/*` / `src/drivers/*` / `src/methods/*` ほか）
+対象マイルストーン: `v0.5.0`（`purge({ expired: true })` — TTL 期限切れの明示一括掃除）  
+関連: [#32](https://github.com/b4moss/cachian/issues/32) / 抽出元 `b4moss/jp-local-gov-id` のキャッシュロジック / モジュール化（core + drivers + methods）  
+作業ブランチ: `cursor/purge-expired-option-3fbc`  
+想定実装: リポジトリルートの単一パッケージ（`src/core/*` / `src/drivers/*` / `src/methods/*` ほか）  
+前提: `v0.4.0` のドライバ／メソッド分割契約を継承し、本版は **非破壊のオプション追加**
 
 ## 1. 目的
 
@@ -14,7 +15,7 @@
 - 読み書きはすべて **非同期**（`Promise`）
 - **ブラウザ専用**: 選んだドライバの API が無い環境ではドライバ生成（または `createCache`）が失敗する（§3.3 / §5.6.1）
 - エントリ形式 `{ expiresAt, data, createdAt? }`・TTL（秒）・無効化・**操作時**のストレージ失敗握りつぶしは v0.3 系と同等
-- **パージ API**（全削除 / キー配列削除 / 経過時間削除 / 絶対時刻削除）は `methods/purge` を選んだときのみ利用可能
+- **パージ API**（全削除 / キー配列削除 / 経過時間削除 / 絶対時刻削除 / **期限切れ一括削除**）は `methods/purge` を選んだときのみ利用可能
 - **本仕様の直接対象外**: `jp-local-gov-id` への配線、CDN 配信の実行時検証、利用側による任意カスタムドライバの公開保証（内部 `StorageAdapter` 形状は実装詳細）
 
 ## 2. 用語
@@ -26,10 +27,10 @@
 | MethodDef | メソッド定義オブジェクト。`attach(ctx)` で Cache にメソッドを生やす |
 | CacheContext | core が保持する共有状態（`enabled` / `keyPrefix` / TTL / 物理キー変換 / 読み書きヘルパ / driver） |
 | エントリ | ストレージに保存する単位。`{ expiresAt: number, data: unknown, createdAt?: number }` |
-| `expiresAt` | 期限切れ判定用のエポックミリ秒。`Date.now() >= expiresAt` なら期限切れ |
-| `createdAt` | 書き込み時刻のエポックミリ秒。`purge({ olderThan })` および絶対時刻パージの年齢判定に使う。新規 `set` / miss 時 `upsert` では必須付与。`update` / hit 時 `upsert` では維持 |
+| `expiresAt` | 期限切れ判定用のエポックミリ秒。`Date.now() >= expiresAt` なら期限切れ。遅延削除（`get` / `has` 等）および `purge({ expired: true })` で参照する |
+| `createdAt` | 書き込み時刻のエポックミリ秒。`purge({ olderThan })` および絶対時刻パージの年齢判定に使う。新規 `set` / miss 時 `upsert` では必須付与。`update` / hit 時 `upsert` では維持。**`purge({ expired: true })` では参照しない** |
 | TTL | Time To Live（秒）。`set` 時に `expiresAt = Date.now() + ttlSeconds * 1000` |
-| 絶対時刻 | `purge` の `createdBefore` / `createdAfter` に渡す時刻。ISO 8601 文字列、またはエポック秒／ミリ秒の数値（§3.6.3） |
+| 絶対時刻 | `purge` の `createdBefore` / `createdAfter` に渡す時刻。ISO 8601 文字列、またはエポック秒／ミリ秒の数値（§3.7.3） |
 | 論理キー | 呼び出し側が渡す `key` 文字列 |
 | 物理キー | 実際にストレージへ書くキー。`keyPrefix` がある場合は `keyPrefix + 論理キー` |
 | miss | `get` が `null` を返すこと（未保存・期限切れ・壊れたエントリ・無効化・操作時のストレージ失敗） |
@@ -191,7 +192,7 @@ type CacheEntry = {
 
 ### 3.7 `purge(options)` — パージ API（`methods/purge` 選択時）
 
-呼び出し側が次の **いずれか 1 モード**を選ぶ（判別共用体）。相対時刻（`olderThan`）と絶対時刻（`createdBefore` / `createdAfter`）の混在は **実行時に `TypeError`**（§3.7.4）。
+呼び出し側が次の **いずれか 1 モード**を選ぶ（判別共用体）。異なるモードの混在は **実行時に `TypeError`**（§3.7.4）。ただし `createdBefore` と `createdAfter` の同時指定は範囲削除として許可する。
 
 ```ts
 type AbsoluteTime = string | number;
@@ -209,7 +210,8 @@ type CachePurgeOptions =
   | { keys: string[] }
   | { olderThan: CachePurgeOlderThan }
   | { createdBefore: AbsoluteTime; createdAfter?: AbsoluteTime }
-  | { createdAfter: AbsoluteTime; createdBefore?: AbsoluteTime };
+  | { createdAfter: AbsoluteTime; createdBefore?: AbsoluteTime }
+  | { expired: true };
 ```
 
 | モード | オプション | 振る舞い |
@@ -220,6 +222,7 @@ type CachePurgeOptions =
 | 絶対時刻（以前） | `{ createdBefore: AbsoluteTime }` | `createdAt < threshold` のエントリのみ削除（§5.8.4） |
 | 絶対時刻（以後） | `{ createdAfter: AbsoluteTime }` | `createdAt > threshold` のエントリのみ削除（§5.8.4） |
 | 絶対時刻（範囲） | `{ createdBefore, createdAfter }` | 両方の条件を満たすエントリのみ削除（§5.8.4） |
+| 期限切れ | `{ expired: true }` | `expiresAt` が期限切れのエントリのみ削除（§3.7.6 / §5.8.5） |
 
 公開型 `CachePurgeOptions` / `CachePurgeOlderThan` / `AbsoluteTime` はルート（または purge サブパス）から export する。
 
@@ -272,17 +275,21 @@ createdAt != null && createdAt <= now - durationMs
 
 不正な入力は **`TypeError`**（メッセージに `createdBefore` / `createdAfter` / `AbsoluteTime` / `ISO` のいずれかを含むこと）。ストレージは変更しない。
 
-#### 3.7.4 相対時刻と絶対時刻の混在
+#### 3.7.4 モード混在
 
 次を実行時に受け取った場合は **`TypeError`**。ストレージは変更しない。
 
 - `olderThan` と `createdBefore` の同時指定
 - `olderThan` と `createdAfter` の同時指定
 - `olderThan` と両方の絶対時刻の同時指定
+- `{ expired: true }` と次のいずれかとの同時指定: `all` / `keys` / `olderThan` / `createdBefore` / `createdAfter`
 
-エラーメッセージに `olderThan` および `createdBefore` または `createdAfter` を含むこと。
+相対×絶対の混在では、エラーメッセージに `olderThan` および `createdBefore` または `createdAfter` を含むこと。  
+`expired` の混在では、エラーメッセージに `expired` を含むこと。
 
 `createdBefore` と `createdAfter` の同時指定は **混在エラーではない**（範囲削除として許可）。
+
+`{ expired: false }` や `expired` キー無しは本モードではない（型上も `{ expired: true }` のみ）。実行時に `expired` キーがあるが値が `true` でない場合の扱いは実装任意（本モードとして処理しなくてよい）。
 
 #### 3.7.5 絶対時刻の削除判定
 
@@ -296,6 +303,24 @@ createdAt != null
 - 境界は **厳密不等号**（`===` のエントリは残す）
 - 期限切れ（`expiresAt`）とは独立
 - 戻り値は常に `Promise<void>`
+
+#### 3.7.6 期限切れ一括削除（`{ expired: true }`）
+
+`now = Date.now()` として、エントリを削除する条件:
+
+```
+now >= expiresAt
+```
+
+（既存の期限切れ判定 §5.2 / `isExpired` と同一）
+
+- **`createdAt` の有無は問わない**。旧形式（`createdAt` 無し）でも `expiresAt` が過去なら **削除する**
+- 未期限切れ（`now < expiresAt`）のエントリは **残す**
+- 年齢パージ（`olderThan` / 絶対時刻）とは独立。作成時刻が古くても未期限なら残す
+- 列挙範囲は §5.8.3 と同じ（`keyPrefix` 配下）
+- 壊れたエントリは列挙時に削除してスキップしてよい（既存 purge 列挙と同じ）
+- 戻り値は常に `Promise<void>`（削除件数は返さない）
+- バックグラウンド／定期の自動呼び出しは契約に含めない（呼び出し側の責務）
 
 ### 3.8 `set` / `update` / `upsert` の書き込み契約
 
@@ -356,6 +381,7 @@ function createTestCache(
 - 時刻依存ケースは `vi.useFakeTimers()` / `Date.now` 固定、または書き込み直後の範囲アサーション
 - `purge({ olderThan })` は fake timers で年齢差を作る（TC-C19）
 - 絶対時刻パージは固定の `createdAt` をストレージへ直接配置するか、fake timers でよい（TC-C27〜）
+- `purge({ expired: true })` は `expiresAt` を過去／未来に直接配置するか、fake timers でよい（TC-C36〜）
 
 対象外（本仕様では必須としない）:
 
@@ -363,6 +389,7 @@ function createTestCache(
 - マルチタブ競合・旧エントリの一括マイグレーション
 - Quota を実際に満杯にする結合テスト（stub で `setItem` が throw すれば足りる）
 - `purge` の削除件数の戻り値や進捗コールバック
+- `purge({ expired: true })` のバックグラウンド／定期自動実行
 - カレンダー月／うるう年に基づく期間換算
 - ISO 8601 の全亜種
 - `update` が「存在しないキーで throw する」契約（本仕様は no-op）
@@ -380,6 +407,8 @@ function createTestCache(
 
 - `Date.now() >= expiresAt` のエントリは **期限切れ**
 - `get` / `has` は期限切れを検知したらストレージから削除し、それぞれ `null` / `false`
+- `update` は期限切れを検知したら削除して no-op。`upsert` は削除してから新規 `set` 相当
+- 触られない期限切れエントリはストレージに残ってよい（遅延削除）。明示掃除は `purge({ expired: true })`（§3.7.6）
 - `ttlSeconds: 0` は「即期限切れになりうる」エントリ。`get` は書き込みと同時刻比較で miss になり得る。許容する
 
 ### 5.3 壊れたエントリ
@@ -425,7 +454,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 - 物理キー = `keyPrefix + key`（単純連結）
 - 異なる prefix のインスタンスは互いに見えない
-- `purge({ olderThan })` / 絶対時刻パージの列挙も **自インスタンスの `keyPrefix` 配下のみ**（localStorage）。IndexedDB は store 全件を見て prefix で絞る実装でよい
+- `purge({ olderThan })` / 絶対時刻パージ / **`purge({ expired: true })`** の列挙も **自インスタンスの `keyPrefix` 配下のみ**（localStorage）。IndexedDB は store 全件を見て prefix で絞る実装でよい
 
 ### 5.8 `purge` の共通契約
 
@@ -458,6 +487,14 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - `createdAt` 無しの正当なエントリは **残す**
 - 境界ちょうど（`===`）のエントリは **残す**
 - `olderThan` との混在は §3.7.4 のとおり `TypeError`
+
+#### 5.8.5 `{ expired: true }`
+
+- 判定は §3.7.6（`Date.now() >= expiresAt`）
+- 列挙対象・壊れたエントリの扱いは §5.8.3 と同じ
+- `createdAt` 無しの正当なエントリでも、期限切れなら **削除する**（§5.8.3 / §5.8.4 と異なる点）
+- 未期限切れは **残す**（`createdAt` の新旧は問わない）
+- 他モード（`all` / `keys` / `olderThan` / `createdBefore` / `createdAfter`）との混在は §3.7.4 のとおり `TypeError`
 
 ## 6. 組み立て・モジュール面（TC-M）
 
@@ -729,6 +766,42 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **操作**: `localStorageDriver()` + 全 methods、および `indexedDBDriver()` + 全 methods
 - **期待**: throw せず Cache を返す。続く `set` / `get` は TC-C01 等どおり
 
+### TC-C36: `purge({ expired: true })` が期限切れのみ削除
+
+- **前提**: 期限切れエントリ（`expiresAt = Date.now() - 1`、`createdAt` 付き）と、未来の `expiresAt` を持つ有効エントリを配置
+- **操作**: `await purge({ expired: true })`
+- **期待**: 期限切れキーのみストレージから消える。有効キーは `get` で hit のまま
+- **期待**: 戻り値は `undefined`（`Promise<void>`）
+
+### TC-C37: `purge({ expired: true })` は `createdAt` 無しの期限切れも削除
+
+- **前提**: `{ expiresAt: Date.now() - 1, data: "legacy" }`（`createdAt` 無し）と、未来の `expiresAt` を持つ有効エントリ
+- **操作**: `await purge({ expired: true })`
+- **期待**: legacy 期限切れは削除。有効エントリは残る
+- **補足**: TC-C20 / TC-C30（年齢・絶対時刻パージで legacy を残す）と対になる契約
+
+### TC-C38: `purge({ expired: true })` は未期限切れのみなら no-op
+
+- **前提**: すべて `expiresAt` が未来のエントリのみ
+- **操作**: `await purge({ expired: true })`
+- **期待**: ストレージ不変。各キーは hit
+
+### TC-C39: `expired` と他モードの混在は TypeError
+
+- **操作**: 次をそれぞれ実行（型上不正なのでテストでは `as never` 等で渡してよい）
+  - `purge({ expired: true, all: true })`
+  - `purge({ expired: true, keys: ["a"] })`
+  - `purge({ expired: true, olderThan: { seconds: 1 } })`
+  - `purge({ expired: true, createdBefore: "2024-01-01T00:00:00.000Z" })`
+  - `purge({ expired: true, createdAfter: 0 })`
+- **期待**: いずれも `TypeError`（メッセージに `expired`）。ストレージ不変
+
+### TC-C40: `enabled: false` で `purge({ expired: true })` は no-op
+
+- **前提**: 期限切れエントリがストレージに存在する。`createTestCache({ enabled: false })`
+- **操作**: `await purge({ expired: true })`
+- **期待**: ストレージ不変（期限切れも消えない）
+
 ## 8. localStorage 固有（TC-LS）
 
 ### TC-LS01: 既定テストヘルパのドライバが localStorage
@@ -756,6 +829,12 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **前提**: TC-LS04 と同様に prefix 隔離されたエントリ
 - **操作**: `app` 側で `purge({ createdBefore: "2099-01-01T00:00:00.000Z" })`
 - **期待**: `"app:"` 配下の対象のみ削除。他キーは残る
+
+### TC-LS06: `purge({ expired: true })` が他 prefix を消さない
+
+- **前提**: prefix `"app:"` のインスタンスに期限切れエントリ、prefix なし（または別 prefix）にも期限切れエントリ
+- **操作**: `app` 側で `purge({ expired: true })`
+- **期待**: `"app:"` 配下の期限切れのみ削除。他 prefix / 無 prefix の期限切れキーは残る
 
 ## 9. IndexedDB 固有（TC-IDB）
 
@@ -806,6 +885,9 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - TC-C28（`createdAfter` / 範囲）
 - TC-C30（絶対時刻で legacy 残す）
 - TC-C31（相対と絶対の混在エラー）
+- TC-C36（`purge` expired）
+- TC-C37（expired で legacy 期限切れも削除）
+- TC-C39（`expired` と他モードの混在エラー）
 
 ## 10. 公開面・パッケージ（TC-P）
 
@@ -831,18 +913,19 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 ## 11. 受け入れ条件
 
 1. §6 の TC-M をパス
-2. §7 の TC-C を localStorage（全 MethodDef）ですべてパス
-3. §8 の TC-LS をパス
+2. §7 の TC-C を localStorage（全 MethodDef）ですべてパス（TC-C36〜TC-C40 を含む）
+3. §8 の TC-LS をパス（TC-LS06 を含む）
 4. §9 の TC-IDB をパス（TC-IDB05 の環境ガード、および TC-IDB06 の再実行セットを含む）
 5. §10 の TC-P をパス
 6. `npm test` および `npm run build` が CI / ローカルで成功
-7. 破壊的変更（組み立て必須・`storage` 文字列廃止・ルートからの drivers/methods 非再エクスポート）をリリースノート等で明示する
-8. （推奨）localStorage + `get`/`set`/`remove` のみの minify サイズが、旧フル一体バンドルより明確に小さいこと
+7. v0.4 破壊的変更（組み立て必須・`storage` 文字列廃止・ルートからの drivers/methods 非再エクスポート）の契約を維持する
+8. v0.5.0 の `purge({ expired: true })` は **非破壊の追加**であり、既存モードの意味を変えないこと
+9. （推奨）localStorage + `get`/`set`/`remove` のみの minify サイズが、旧フル一体バンドルより明確に小さいこと
 
 ## 12. トレーサビリティ
 
-| 抽出元 / 旧 cachian (v0.3) | v0.4 |
-|----------------------------|------|
+| 抽出元 / 旧 cachian (v0.3) | v0.4 / v0.5 |
+|----------------------------|-------------|
 | `createCache()` 引数なし・全メソッド | `createCache({ driver, methods })` 必須組み立て |
 | `storage: "localStorage"` | `localStorageDriver()` |
 | `storage: "indexedDB", dbName, storeName` | `indexedDBDriver({ dbName, storeName })` |
@@ -852,5 +935,6 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 | 同期 API（抽出元） | 非同期 API |
 | （なし） | サブパス分割 + `sideEffects: false` |
 | 環境非対応時 | `CachianEnvironmentError`（ドライバ生成時または `createCache` 時） |
+| 期限切れは操作時の遅延削除のみ | 同左 + **`purge({ expired: true })`（v0.5.0）** |
 
 本仕様は cachian 単体の契約であり、`createLocalGovClient` のオプション名の互換は **jp-local-gov-id 配線時の別仕様**とする。
