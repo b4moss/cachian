@@ -5,7 +5,60 @@ import {
   createCache,
   DEFAULT_CACHE_TTL_SECONDS,
 } from "./index";
-import type { CacheEntry, CreateCacheOptions } from "./types";
+import { localStorageDriver } from "./drivers/localStorage";
+import { indexedDBDriver } from "./drivers/indexedDB";
+import { get } from "./methods/get";
+import { set } from "./methods/set";
+import { update } from "./methods/update";
+import { upsert } from "./methods/upsert";
+import { remove } from "./methods/remove";
+import { has } from "./methods/has";
+import { clear } from "./methods/clear";
+import { purge } from "./methods/purge";
+import type { CacheEntry } from "./types";
+import type { CreateCacheOptions, MethodDef } from "./core/types";
+import type { StorageAdapter } from "./drivers/types";
+
+const ALL_METHODS = [
+  get,
+  set,
+  update,
+  upsert,
+  remove,
+  has,
+  clear,
+  purge,
+] as const satisfies readonly MethodDef[];
+
+type TestCacheOptions = Omit<CreateCacheOptions, "driver" | "methods"> & {
+  driver?: StorageAdapter;
+  methods?: MethodDef[];
+};
+
+function createTestCache(options: TestCacheOptions = {}) {
+  const { driver, methods, ...rest } = options;
+  return createCache({
+    driver: driver ?? localStorageDriver(),
+    methods: methods ?? [...ALL_METHODS],
+    ...rest,
+  });
+}
+
+function createIdbTestCache(
+  options: TestCacheOptions & { dbName?: string; storeName?: string } = {},
+) {
+  const { dbName, storeName, driver, methods, ...rest } = options;
+  return createCache({
+    driver:
+      driver ??
+      indexedDBDriver({
+        dbName,
+        storeName,
+      }),
+    methods: methods ?? [...ALL_METHODS],
+    ...rest,
+  });
+}
 
 function createMemoryLocalStorage() {
   const store = new Map<string, string>();
@@ -127,20 +180,20 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
 
   it("TC-C01 / TC-LS01: default backend set → get hit via localStorage", async () => {
     const setItem = vi.spyOn(globalThis.localStorage, "setItem");
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", { a: 1 });
     expect(await cache.get("k")).toEqual({ a: 1 });
     expect(setItem).toHaveBeenCalled();
   });
 
   it("TC-C02: miss", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     expect(await cache.get("missing")).toBeNull();
     expect(await cache.has("missing")).toBe(false);
   });
 
   it("TC-C03: default TTL ≈ 1 year / createdAt set", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     const before = Date.now();
     await cache.set("k", "v");
     const entry = readLocalEntry(store, "k");
@@ -156,7 +209,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C04: instance ttlSeconds applies to set", async () => {
-    const cache = createCache({ ttlSeconds: 60 });
+    const cache = createTestCache({ ttlSeconds: 60 });
     const before = Date.now();
     await cache.set("k", 1);
     const entry = readLocalEntry(store, "k")!;
@@ -165,7 +218,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C05: set options.ttlSeconds overrides instance default", async () => {
-    const cache = createCache({ ttlSeconds: 3600 });
+    const cache = createTestCache({ ttlSeconds: 3600 });
     const before = Date.now();
     await cache.set("k", 1, { ttlSeconds: 10 });
     const entry = readLocalEntry(store, "k")!;
@@ -175,14 +228,14 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
 
   it("TC-C06: invalid instance ttlSeconds throws TypeError", () => {
     for (const ttlSeconds of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(() => createCache({ ttlSeconds })).toThrow(TypeError);
-      expect(() => createCache({ ttlSeconds })).toThrow(/ttlSeconds/);
+      expect(() => createTestCache({ ttlSeconds })).toThrow(TypeError);
+      expect(() => createTestCache({ ttlSeconds })).toThrow(/ttlSeconds/);
     }
     expect(store.size).toBe(0);
   });
 
   it("TC-C07: invalid set ttlSeconds throws and does not write", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await expect(cache.set("k", 1, { ttlSeconds: -1 })).rejects.toThrow(
       TypeError,
     );
@@ -190,7 +243,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C08: expired entry is removed on get", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     store.set(
       "k",
       JSON.stringify({
@@ -204,7 +257,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C09: corrupt entries are cleaned up", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     store.set("bad-json", "not-json");
     store.set("bad-shape", JSON.stringify({ expiresAt: "x", data: 1 }));
     expect(await cache.get("bad-json")).toBeNull();
@@ -214,9 +267,9 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C10: enabled false is miss / no-op without mutating storage", async () => {
-    await createCache().set("k", "kept");
+    await createTestCache().set("k", "kept");
     const snapshot = new Map(store);
-    const cache = createCache({ enabled: false });
+    const cache = createTestCache({ enabled: false });
     expect(await cache.get("k")).toBeNull();
     expect(await cache.has("k")).toBe(false);
     await cache.set("k", "new");
@@ -232,7 +285,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C11: remove", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", 1);
     await cache.remove("k");
     expect(await cache.get("k")).toBeNull();
@@ -240,7 +293,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C12: has is true only for valid entries", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("ok", 1);
     store.set(
       "expired",
@@ -255,8 +308,8 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C13: keyPrefix isolates instances", async () => {
-    const a = createCache({ keyPrefix: "a:" });
-    const b = createCache({ keyPrefix: "b:" });
+    const a = createTestCache({ keyPrefix: "a:" });
+    const b = createTestCache({ keyPrefix: "b:" });
     await a.set("k", 1);
     expect(await b.get("k")).toBeNull();
     expect(store.has("a:k")).toBe(true);
@@ -265,7 +318,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
 
   it("TC-C14 / TC-LS03: clear only removes own prefix keys", async () => {
     store.set("other", "keep");
-    const cache = createCache({ keyPrefix: "app:" });
+    const cache = createTestCache({ keyPrefix: "app:" });
     await cache.set("k", 1);
     await cache.set("m", 2);
     await cache.clear();
@@ -276,8 +329,8 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
 
   it("TC-C15: missing localStorage throws CachianEnvironmentError", () => {
     vi.stubGlobal("localStorage", undefined);
-    expect(() => createCache()).toThrow(CachianEnvironmentError);
-    expect(() => createCache()).toThrow(/localStorage/);
+    expect(() => createTestCache()).toThrow(CachianEnvironmentError);
+    expect(() => createTestCache()).toThrow(/localStorage/);
     expect(store.size).toBe(0);
   });
 
@@ -290,8 +343,8 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
       },
     });
     try {
-      expect(() => createCache()).toThrow(CachianEnvironmentError);
-      expect(() => createCache()).toThrow(/localStorage/);
+      expect(() => createTestCache()).toThrow(CachianEnvironmentError);
+      expect(() => createTestCache()).toThrow(/localStorage/);
     } finally {
       if (previous) {
         Object.defineProperty(globalThis, "localStorage", previous);
@@ -302,7 +355,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C24: createCache succeeds when APIs are available", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", 1);
     expect(await cache.get("k")).toBe(1);
   });
@@ -318,13 +371,13 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
       key: () => null,
       length: 0,
     } satisfies Storage);
-    const cache = createCache();
+    const cache = createTestCache();
     await expect(cache.set("k", "v")).resolves.toBeUndefined();
     expect(await cache.get("k")).toBeNull();
   });
 
   it("TC-LS02: stores JSON entry string (jp-local-gov-id compatible)", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     const url = "https://example/data.json";
     await cache.set(url, { x: 1 });
     const parsed = JSON.parse(store.get(url)!) as CacheEntry;
@@ -335,7 +388,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
 
   it("TC-C17: purge({ all: true }) matches clear scope", async () => {
     store.set("other", "keep");
-    const cache = createCache({ keyPrefix: "app:" });
+    const cache = createTestCache({ keyPrefix: "app:" });
     await cache.set("k", 1);
     await cache.set("m", 2);
     await cache.purge({ all: true });
@@ -345,7 +398,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C18: purge({ keys }) removes only listed keys", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("a", 1);
     await cache.set("b", 2);
     await cache.set("c", 3);
@@ -361,7 +414,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   it("TC-C19: purge({ olderThan }) removes only old entries", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("old", 1);
     vi.advanceTimersByTime(11 * 60 * 1000);
     await cache.set("fresh", 2);
@@ -379,7 +432,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C20: olderThan keeps legacy entries without createdAt", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     store.set(
       "legacy",
       JSON.stringify({
@@ -397,7 +450,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C21: invalid olderThan throws TypeError", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", 1);
     const snapshot = new Map(store);
     await expect(cache.purge({ olderThan: {} })).rejects.toThrow(TypeError);
@@ -417,8 +470,8 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   it("TC-LS04: purge({ olderThan }) does not touch other prefixes", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
-    const app = createCache({ keyPrefix: "app:" });
-    const plain = createCache();
+    const app = createTestCache({ keyPrefix: "app:" });
+    const plain = createTestCache();
     await app.set("k", 1);
     await plain.set("k", 2);
     vi.advanceTimersByTime(1000);
@@ -430,7 +483,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   it("TC-C22: update changes data only and keeps createdAt", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", { a: 1 });
     const before = readLocalEntry(store, "k")!;
     vi.advanceTimersByTime(60_000);
@@ -444,7 +497,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   it("TC-C23: update with ttlSeconds refreshes expiresAt only", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", "v1");
     const createdAt = readLocalEntry(store, "k")!.createdAt;
     vi.advanceTimersByTime(5_000);
@@ -458,7 +511,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C24: update is no-op on miss / expired", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await expect(cache.update("missing", 1)).resolves.toBeUndefined();
     expect(store.has("missing")).toBe(false);
 
@@ -478,7 +531,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   it("TC-C25: upsert is set on miss and update on hit", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-06-01T00:00:00.000Z"));
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.upsert("a", 1);
     expect(await cache.get("a")).toBe(1);
     const first = readLocalEntry(store, "a")!;
@@ -503,7 +556,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   it("TC-C26: set regenerates createdAt / expiresAt even when key exists", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", "old");
     const oldCreatedAt = readLocalEntry(store, "k")!.createdAt!;
     vi.advanceTimersByTime(60_000);
@@ -514,7 +567,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C27: purge({ createdBefore }) removes only earlier entries", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     const far = Date.parse("2099-01-01T00:00:00.000Z");
     store.set(
       "old",
@@ -547,7 +600,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C28: purge({ createdAfter }) and range", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     const far = Date.parse("2099-01-01T00:00:00.000Z");
     const seed = async () => {
       store.clear();
@@ -594,7 +647,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C29: AbsoluteTime parses ISO / seconds / milliseconds", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     const createdAt = 1_700_000_000_000;
     const far = createdAt + 86_400_000;
 
@@ -643,7 +696,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C30: absolute purge keeps legacy entries without createdAt", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     store.set(
       "legacy",
       JSON.stringify({
@@ -665,7 +718,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C31: mixing olderThan with absolute time throws TypeError", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", 1);
     const snapshot = new Map(store);
     await expect(
@@ -690,7 +743,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-C32: invalid update/upsert ttlSeconds throws TypeError", async () => {
-    const cache = createCache();
+    const cache = createTestCache();
     await cache.set("k", 1);
     const snapshot = new Map(store);
     await expect(cache.update("k", 1, { ttlSeconds: -1 })).rejects.toThrow(
@@ -706,8 +759,8 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
   });
 
   it("TC-LS05: absolute purge does not touch other prefixes", async () => {
-    const app = createCache({ keyPrefix: "app:" });
-    const plain = createCache();
+    const app = createTestCache({ keyPrefix: "app:" });
+    const plain = createTestCache();
     const far = Date.parse("2099-01-01T00:00:00.000Z");
     const old = Date.parse("2020-01-01T00:00:00.000Z");
     store.set(
@@ -748,13 +801,14 @@ describe("indexedDB backend (TC-IDB)", () => {
     vi.useRealTimers();
   });
 
-  async function freshCreate(options?: CreateCacheOptions) {
-    const mod = await import("./index");
-    return mod.createCache(options);
+  function freshCreate(
+    options: TestCacheOptions & { dbName?: string; storeName?: string } = {},
+  ) {
+    return createIdbTestCache(options);
   }
 
   it("TC-IDB01: hit/miss without touching localStorage", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("k", { a: 1 });
     expect(await cache.get("k")).toEqual({ a: 1 });
     expect(await cache.get("missing")).toBeNull();
@@ -762,28 +816,22 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB02: default dbName/storeName work", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("k", "v");
     const raw = await readIdbEntry("cachian", "entries", "k");
     expect(raw).toMatchObject({ data: "v", expiresAt: expect.any(Number) });
   });
 
   it("TC-IDB03: custom dbName/storeName are isolated", async () => {
-    const a = await freshCreate({
-      storage: "indexedDB",
-      storeName: "a",
-    });
-    const b = await freshCreate({
-      storage: "indexedDB",
-      storeName: "b",
-    });
+    const a = await freshCreate({ storeName: "a" });
+    const b = await freshCreate({ storeName: "b" });
     await a.set("k", 1);
     expect(await b.get("k")).toBeNull();
     expect(await a.get("k")).toBe(1);
   });
 
   it("TC-IDB04: stores entry objects (not JSON strings)", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("k", { x: 1 });
     const raw = await readIdbEntry("cachian", "entries", "k");
     expect(typeof raw).toBe("object");
@@ -797,17 +845,14 @@ describe("indexedDB backend (TC-IDB)", () => {
 
   it("TC-IDB05: missing indexedDB throws CachianEnvironmentError", () => {
     vi.stubGlobal("indexedDB", undefined);
-    expect(() => createCache({ storage: "indexedDB" })).toThrow(
+    expect(() => createTestCache({ driver: indexedDBDriver() })).toThrow(
       CachianEnvironmentError,
     );
-    expect(() => createCache({ storage: "indexedDB" })).toThrow(/IndexedDB/i);
+    expect(() => createTestCache({ driver: indexedDBDriver() })).toThrow(/IndexedDB/i);
   });
 
   it("TC-IDB06 / TC-C04: instance ttlSeconds", async () => {
-    const cache = await freshCreate({
-      storage: "indexedDB",
-      ttlSeconds: 60,
-    });
+    const cache = await freshCreate({ ttlSeconds: 60 });
     const before = Date.now();
     await cache.set("k", 1);
     const raw = (await readIdbEntry(
@@ -820,7 +865,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C08: expired entry removed on get", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("k", "old");
     const indexedDB = globalThis.indexedDB!;
     await new Promise<void>((resolve, reject) => {
@@ -845,8 +890,8 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C10: enabled false no-op", async () => {
-    await (await freshCreate({ storage: "indexedDB" })).set("k", "kept");
-    const cache = await freshCreate({ storage: "indexedDB", enabled: false });
+    await (await freshCreate()).set("k", "kept");
+    const cache = await freshCreate({ enabled: false });
     expect(await cache.get("k")).toBeNull();
     await cache.set("k", "new");
     await cache.update("k", "upd");
@@ -857,26 +902,20 @@ describe("indexedDB backend (TC-IDB)", () => {
     await cache.purge({ keys: ["k"] });
     await cache.purge({ olderThan: { seconds: 0 } });
     await cache.purge({ createdBefore: "2099-01-01T00:00:00.000Z" });
-    const enabled = await freshCreate({ storage: "indexedDB" });
+    const enabled = await freshCreate();
     expect(await enabled.get("k")).toBe("kept");
   });
 
   it("TC-IDB06 / TC-C11: remove", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("k", 1);
     await cache.remove("k");
     expect(await cache.get("k")).toBeNull();
   });
 
   it("TC-IDB06 / TC-C13: keyPrefix on physical keys", async () => {
-    const a = await freshCreate({
-      storage: "indexedDB",
-      keyPrefix: "a:",
-    });
-    const b = await freshCreate({
-      storage: "indexedDB",
-      keyPrefix: "b:",
-    });
+    const a = await freshCreate({ keyPrefix: "a:" });
+    const b = await freshCreate({ keyPrefix: "b:" });
     await a.set("k", 1);
     expect(await b.get("k")).toBeNull();
     const raw = await readIdbEntry("cachian", "entries", "a:k");
@@ -884,14 +923,8 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-C14 indexedDB: clear only current store", async () => {
-    const a = await freshCreate({
-      storage: "indexedDB",
-      storeName: "storeA",
-    });
-    const b = await freshCreate({
-      storage: "indexedDB",
-      storeName: "storeB",
-    });
+    const a = await freshCreate({ storeName: "storeA" });
+    const b = await freshCreate({ storeName: "storeB" });
     await a.set("k", 1);
     await b.set("k", 2);
     await a.clear();
@@ -900,7 +933,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C17: purge all", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("a", 1);
     await cache.set("b", 2);
     await cache.purge({ all: true });
@@ -909,7 +942,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C18: purge keys", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("a", 1);
     await cache.set("b", 2);
     await cache.set("c", 3);
@@ -920,7 +953,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C19: purge olderThan", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("old", 1);
     await cache.set("fresh", 2);
     const now = Date.now();
@@ -940,7 +973,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C20: olderThan keeps legacy without createdAt", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("legacy", "tmp");
     await cache.set("dated", "tmp");
     const now = Date.now();
@@ -959,14 +992,14 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C21: invalid olderThan", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("k", 1);
     await expect(cache.purge({ olderThan: {} })).rejects.toThrow(TypeError);
     expect(await cache.get("k")).toBe(1);
   });
 
   it("TC-IDB06 / TC-C22: update keeps createdAt", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("k", { a: 1 });
     const createdAt = Date.parse("2024-01-01T00:00:00.000Z");
     const expiresAt = Date.parse("2099-01-01T00:00:00.000Z");
@@ -987,7 +1020,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C25: upsert miss→set / hit→update", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.upsert("a", 1);
     expect(await cache.get("a")).toBe(1);
     const createdAt = Date.parse("2024-01-01T00:00:00.000Z");
@@ -1009,7 +1042,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C27: createdBefore", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("old", "tmp");
     await cache.set("mid", "tmp");
     await cache.set("new", "tmp");
@@ -1036,7 +1069,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C28: createdAfter / range", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("old", "tmp");
     await cache.set("mid", "tmp");
     await cache.set("new", "tmp");
@@ -1063,7 +1096,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C30: absolute purge keeps legacy without createdAt", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("legacy", "tmp");
     await cache.set("dated", "tmp");
     const now = Date.now();
@@ -1082,7 +1115,7 @@ describe("indexedDB backend (TC-IDB)", () => {
   });
 
   it("TC-IDB06 / TC-C31: olderThan mixed with absolute throws", async () => {
-    const cache = await freshCreate({ storage: "indexedDB" });
+    const cache = await freshCreate();
     await cache.set("k", 1);
     await expect(
       cache.purge({
@@ -1091,5 +1124,91 @@ describe("indexedDB backend (TC-IDB)", () => {
       } as never),
     ).rejects.toThrow(TypeError);
     expect(await cache.get("k")).toBe(1);
+  });
+});
+
+describe("modular assembly (TC-M)", () => {
+  let store: Map<string, string>;
+
+  beforeEach(() => {
+    const mem = createMemoryLocalStorage();
+    store = mem.store;
+    vi.stubGlobal("localStorage", mem.localStorage);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("TC-M01: empty methods throws TypeError", () => {
+    expect(() =>
+      createCache({ driver: localStorageDriver(), methods: [] }),
+    ).toThrow(TypeError);
+    expect(() =>
+      createCache({ driver: localStorageDriver(), methods: [] }),
+    ).toThrow(/methods/);
+  });
+
+  it("TC-M02: duplicate method names throw TypeError", () => {
+    expect(() =>
+      createCache({ driver: localStorageDriver(), methods: [get, get] }),
+    ).toThrow(TypeError);
+    expect(() =>
+      createCache({ driver: localStorageDriver(), methods: [get, get] }),
+    ).toThrow(/duplicate/);
+  });
+
+  it("TC-M03: only selected methods are attached", () => {
+    const cache = createCache({
+      driver: localStorageDriver(),
+      methods: [get, set, remove],
+    });
+    expect(typeof cache.get).toBe("function");
+    expect(typeof cache.set).toBe("function");
+    expect(typeof cache.remove).toBe("function");
+    expect("purge" in cache).toBe(false);
+    expect("update" in cache).toBe(false);
+    expect("upsert" in cache).toBe(false);
+    expect("has" in cache).toBe(false);
+    expect("clear" in cache).toBe(false);
+  });
+
+  it("TC-M04: root does not re-export drivers or methods", async () => {
+    const mod = await import("./index");
+    expect(mod).not.toHaveProperty("localStorageDriver");
+    expect(mod).not.toHaveProperty("indexedDBDriver");
+    expect(mod).not.toHaveProperty("get");
+    expect(mod).not.toHaveProperty("set");
+    expect(mod).not.toHaveProperty("purge");
+  });
+
+  it("TC-M05: drivers and methods are importable from subpaths", async () => {
+    await expect(import("./drivers/localStorage")).resolves.toMatchObject({
+      localStorageDriver: expect.any(Function),
+    });
+    await expect(import("./drivers/indexedDB")).resolves.toMatchObject({
+      indexedDBDriver: expect.any(Function),
+    });
+    await expect(import("./methods/get")).resolves.toMatchObject({
+      get: expect.objectContaining({ name: "get", attach: expect.any(Function) }),
+    });
+    await expect(import("./methods/purge")).resolves.toMatchObject({
+      purge: expect.objectContaining({
+        name: "purge",
+        attach: expect.any(Function),
+      }),
+    });
+  });
+
+  it("TC-M06: get/set/remove alone support basic read/write", async () => {
+    const cache = createCache({
+      driver: localStorageDriver(),
+      methods: [get, set, remove],
+    });
+    await cache.set("k", { a: 1 });
+    expect(await cache.get("k")).toEqual({ a: 1 });
+    await cache.remove("k");
+    expect(await cache.get("k")).toBeNull();
+    expect(store.size).toBe(0);
   });
 });
