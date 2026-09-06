@@ -9,11 +9,11 @@
 
 [日本語](./README_ja.md)
 
-Universal **browser-only** cache helper with **localStorage** (default) and **IndexedDB** backends, TTL, and a small async API.
+Tree-shakeable **browser-only** cache helper. Pick a **driver** (localStorage / IndexedDB) and only the **methods** you need (`get` / `set` / `remove` / …).
 
 Extracted and generalized from the cache logic in [`@b4moss/jp-local-gov-id`](https://github.com/b4moss/jp-local-gov-id).
 
-CI/CD direction: [docs/ci-cd.md](./docs/ci-cd.md)
+CI/CD: [docs/ci-cd.md](./docs/ci-cd.md)
 
 ## Install
 
@@ -25,37 +25,57 @@ npm install @b4moss/cachian
 
 ```ts
 import { createCache } from "@b4moss/cachian";
+import { localStorageDriver } from "@b4moss/cachian/drivers/localStorage";
+import { get } from "@b4moss/cachian/methods/get";
+import { set } from "@b4moss/cachian/methods/set";
+import { remove } from "@b4moss/cachian/methods/remove";
 
-const cache = createCache(); // localStorage by default
+const cache = createCache({
+  driver: localStorageDriver(),
+  methods: [get, set, remove],
+});
 
 await cache.set("https://example.com/data.json", { hello: "world" });
 const data = await cache.get("https://example.com/data.json");
 ```
 
-Browser only: `createCache()` throws `CachianEnvironmentError` when the chosen backend API (`localStorage` / `indexedDB`) is unavailable (e.g. Node / SSR). Importing the module alone is safe — call `createCache()` only in the browser (or guard with `typeof window !== "undefined"`).
+Browser only: drivers throw `CachianEnvironmentError` when the backend API is unavailable (e.g. Node / SSR). Importing modules alone is safe — create the driver / cache only in the browser (or guard with `typeof window !== "undefined"`).
 
 ### IndexedDB
 
 ```ts
+import { indexedDBDriver } from "@b4moss/cachian/drivers/indexedDB";
+
 const cache = createCache({
-  storage: "indexedDB",
-  dbName: "my-app",
-  storeName: "cache",
+  driver: indexedDBDriver({ dbName: "my-app", storeName: "cache" }),
+  methods: [get, set, remove],
 });
 ```
 
-### Options
+### Options (`createCache`)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `storage` | `"localStorage"` | `"localStorage"` or `"indexedDB"` |
+| `driver` | _(required)_ | Storage adapter from a driver factory |
+| `methods` | _(required)_ | Non-empty list of method defs to attach |
 | `enabled` | `true` | When `false`, reads miss and writes are no-ops |
 | `ttlSeconds` | `31536000` (1 year) | Default TTL for `set` |
 | `keyPrefix` | `""` | Prefix for physical keys |
-| `dbName` | `"cachian"` | IndexedDB database name |
-| `storeName` | `"entries"` | IndexedDB object store name |
 
-Entry shape in storage: `{ expiresAt: number, data: unknown, createdAt?: number }` (localStorage stores JSON strings; IndexedDB stores objects). New writes always include `createdAt`.
+### Methods (subpath imports)
+
+| Import | Attaches |
+|--------|----------|
+| `@b4moss/cachian/methods/get` | `get` |
+| `@b4moss/cachian/methods/set` | `set` |
+| `@b4moss/cachian/methods/update` | `update` |
+| `@b4moss/cachian/methods/upsert` | `upsert` |
+| `@b4moss/cachian/methods/remove` | `remove` |
+| `@b4moss/cachian/methods/has` | `has` |
+| `@b4moss/cachian/methods/clear` | `clear` |
+| `@b4moss/cachian/methods/purge` | `purge` |
+
+Entry shape in storage: `{ expiresAt: number, data: unknown, createdAt?: number }` (localStorage stores JSON strings; IndexedDB stores objects). New `set` writes always include `createdAt`.
 
 ### Writes: `set` / `update` / `upsert`
 
@@ -70,25 +90,26 @@ await cache.upsert("k", value); // set on miss, update on hit
 ### Purge
 
 ```ts
-// Remove everything managed by this instance
-await cache.purge({ all: true });
+import { purge } from "@b4moss/cachian/methods/purge";
 
-// Remove specific logical keys
-await cache.purge({ keys: ["a", "b"] });
-
-// Remove entries older than the given age (fixed: year=365d, month=30d)
-await cache.purge({ olderThan: { hours: 1, mins: 30 } });
-
-// Absolute time (ISO 8601, or epoch seconds/ms number)
-await cache.purge({ createdBefore: "2024-06-01T00:00:00.000Z" });
-await cache.purge({ createdAfter: 1_700_000_000_000 });
-await cache.purge({
-  createdAfter: "2024-01-01T00:00:00.000Z",
-  createdBefore: "2024-12-01T00:00:00.000Z",
+const cache = createCache({
+  driver: localStorageDriver(),
+  methods: [get, set, purge],
 });
+
+await cache.purge({ all: true });
+await cache.purge({ keys: ["a", "b"] });
+await cache.purge({ olderThan: { hours: 1, mins: 30 } });
+await cache.purge({ createdBefore: "2024-06-01T00:00:00.000Z" });
 ```
 
-Legacy entries without `createdAt` are left alone by `olderThan` and absolute-time modes (use `all` or `keys` to remove them). Mixing `olderThan` with `createdBefore` / `createdAfter` throws `TypeError`.
+Legacy entries without `createdAt` are left alone by `olderThan` and absolute-time modes. Mixing `olderThan` with `createdBefore` / `createdAfter` throws `TypeError`.
+
+## Breaking changes (v0.4)
+
+- `createCache()` no longer returns a fixed full API; pass `driver` + `methods`.
+- `storage: "localStorage" | "indexedDB"` string option removed — use driver factories.
+- Drivers and methods are **not** re-exported from the package root (import subpaths).
 
 ## License
 
