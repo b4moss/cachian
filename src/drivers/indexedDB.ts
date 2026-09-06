@@ -1,6 +1,14 @@
+import { assertStorageAvailable } from "../environment";
 import { isCacheEntry } from "../entry";
 import type { CacheEntry } from "../types";
 import type { StorageAdapter } from "./types";
+
+export type IndexedDBDriverOptions = {
+  /** IndexedDB database name. Default: `"cachian"`. */
+  dbName?: string;
+  /** Object store name. Default: `"entries"`. */
+  storeName?: string;
+};
 
 type IndexedDBAdapterOptions = {
   dbName: string;
@@ -121,7 +129,7 @@ function withStore<T>(
   });
 }
 
-export function createIndexedDBAdapter(
+function createIndexedDBAdapter(
   options: IndexedDBAdapterOptions,
 ): StorageAdapter {
   const { dbName, storeName } = options;
@@ -213,4 +221,15 @@ export function createIndexedDBAdapter(
       );
     },
   };
+}
+
+/** Create an IndexedDB-backed storage adapter. Throws if unavailable. */
+export function indexedDBDriver(
+  options: IndexedDBDriverOptions = {},
+): StorageAdapter {
+  assertStorageAvailable("indexedDB");
+  return createIndexedDBAdapter({
+    dbName: options.dbName ?? "cachian",
+    storeName: options.storeName ?? "entries",
+  });
 }
