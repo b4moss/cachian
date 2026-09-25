@@ -13,7 +13,7 @@ Tree-shakeable **browser-only** cache helper. Pick a **driver** (localStorage / 
 
 Extracted and generalized from the cache logic in [`@b4moss/jp-local-gov-id`](https://github.com/b4moss/jp-local-gov-id).
 
-CI/CD: [docs/ci-cd.md](./docs/ci-cd.md)
+CI/CD: [docs/specs/ops/ci-cd.md](./docs/specs/ops/ci-cd.md)
 
 ## Install
 

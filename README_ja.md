@@ -13,7 +13,7 @@
 
 [`@b4moss/jp-local-gov-id`](https://github.com/b4moss/jp-local-gov-id) のキャッシュロジックを外出し・汎用化したものです。
 
-CI/CD: [docs/ci-cd.ja.md](./docs/ci-cd.ja.md)
+CI/CD: [docs/specs/ops/ci-cd.ja.md](./docs/specs/ops/ci-cd.ja.md)
 
 ## インストール
 
