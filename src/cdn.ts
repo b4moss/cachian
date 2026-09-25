@@ -29,13 +29,11 @@ export { update } from "./methods/update";
 export { upsert } from "./methods/upsert";
 export { remove } from "./methods/remove";
 export { has } from "./methods/has";
-export { clear } from "./methods/clear";
 export { purge } from "./methods/purge";
 
 import { createCache } from "./core/createCache";
 import { indexedDBDriver } from "./drivers/indexedDB";
 import { localStorageDriver } from "./drivers/localStorage";
-import { clear } from "./methods/clear";
 import { get } from "./methods/get";
 import { has } from "./methods/has";
 import { purge } from "./methods/purge";
@@ -53,7 +51,6 @@ const ALL_METHODS = [
   upsert,
   remove,
   has,
-  clear,
   purge,
 ] as const satisfies readonly MethodDef[];
 

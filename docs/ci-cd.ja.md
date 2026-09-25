@@ -26,12 +26,13 @@ feature/* / cursor/*
   PR → develop / dev-*     ← CI（Gate → Test ‖ Build → "Test & Build"）
         │
         ▼
-      main                 ← Scorecard・既定ブランチ・v* タグはここからのみ
+      main                 ← Codecov アップロード・Scorecard・既定ブランチ・v* タグはここからのみ
 ```
 
 - 日常の統合先: `develop`（必要時は版付き `dev-*`）
 - リリース: `main` に取り込み、`main` 上で `vX.Y.Z`（または `vX.Y.Z-rc.N`）をタグ付け
 - `main` 向け PR では CI に依存しない（安定ブランチ向けの参考リポジトリと同じ扱い）
+- Codecov は **`main` への push（= `main` へのマージ後）のみ**。PR CI ではアップロードしない
 
 ## ローカルゲート（PR 前必須）
 
@@ -45,7 +46,7 @@ npm run ci:local
 act pull_request -W .github/workflows/ci.yml
 ```
 
-既定は [`.actrc`](../.actrc)。`act` 実行時はゲートが Test/Build を必ず実行します（`ACT=true`）。Codecov は `ACT` 時にスキップします。
+既定は [`.actrc`](../.actrc)。`act` 実行時はゲートが Test/Build を必ず実行します（`ACT=true`）。Codecov は `main` 専用の別ワークフローであり、ローカル `act` の対象外です。
 
 Docker が無い環境（一部の Cloud Agent など）:
 
@@ -65,7 +66,8 @@ npm run ci:local:fallback   # npm ci && npm test && npm run build
 
 | ファイル | 役割 | 状態 |
 |----------|------|------|
-| `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → 集約 **Test & Build** | 実装済み |
+| `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → 集約 **Test & Build**（Codecov アップロードなし） | 実装済み |
+| `.github/workflows/codecov.yml` | `main` への push → test + `coverage/lcov.info` を Codecov へアップロード | 実装済み |
 | `.github/workflows/codeql.yml` | CodeQL（`develop`/`dev-*` PR、`main` push、週次） | 予定 |
 | `.github/workflows/scorecard.yml` | OpenSSF Scorecard（`main` + schedule） | 実装済み |
 | `.github/workflows/release-on-tag.yml` | `v*` push → GitHub Release 作成 | 実装済み |
@@ -87,7 +89,17 @@ npm run ci:local:fallback   # npm ci && npm test && npm run build
 | required check 名 | 集約ジョブ **`Test & Build`** |
 | Node | `24`（engines `>=24`）、`npm ci`、Actions は SHA ピン |
 
-Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージルート）。
+### Codecov（main のみ）
+
+| 項目 | ルール |
+|------|--------|
+| トリガ | `main` への `push`（`main` へのマージ） |
+| 発火しない例 | PR CI（`ci.yml`）、他ブランチへの push |
+| 手順 | `npm ci` → `npm test` → `coverage/lcov.info` をアップロード |
+| 認証 | 任意の `CODECOV_TOKEN`、`id-token: write` による OIDC |
+| ステータス | informational（`codecov.yml`）、`fail_ci_if_error: false` |
+
+カバレッジパス: `coverage/lcov.info`（単一パッケージルート）。README の Coverage バッジは既定ブランチ（`main`）を参照する。
 
 ### CD — npm publish
 
@@ -130,5 +142,6 @@ Codecov のカバレッジパス: `coverage/lcov.info`（単一パッケージ�
 ローカル変更 → npm run ci:local（必須）
             → develop / dev-* へ PR
             → CI Gate → Test ‖ Build → "Test & Build"
+merge → main → Codecov アップロード（バッジ用カバレッジ）
 main 上のタグ v* → Release → Publish（CI 再利用 or 再検証）→ npm
 ```

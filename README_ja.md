@@ -70,9 +70,8 @@ const cache = createCache({
 | `@b4moss/cachian/methods/set` | `set` |
 | `@b4moss/cachian/methods/update` | `update` |
 | `@b4moss/cachian/methods/upsert` | `upsert` |
-| `@b4moss/cachian/methods/remove` | `remove` |
+| `@b4moss/cachian/methods/remove` | `remove`（単一キーのみ） |
 | `@b4moss/cachian/methods/has` | `has` |
-| `@b4moss/cachian/methods/clear` | `clear` |
 | `@b4moss/cachian/methods/purge` | `purge` |
 
 保存形式は `{ expiresAt: number, data: unknown, createdAt?: number }`（localStorage は JSON 文字列、IndexedDB はオブジェクト）。新規 `set` では必ず `createdAt` を付与します。
@@ -105,6 +104,27 @@ await cache.purge({ expired: true });
 ```
 
 `createdAt` の無い旧エントリは `olderThan` および絶対時刻モードでは残りますが、`{ expired: true }` では `expiresAt` が過去なら **削除されます**。`olderThan` と `createdBefore` / `createdAfter` の混在、および `{ expired: true }` と他モードの混在は `TypeError` になります。
+
+## 破壊的変更（v0.6）
+
+- 公開 `clear()` MethodDef / `@b4moss/cachian/methods/clear` を廃止 — 全削除は `purge({ all: true })`
+- `remove(key)` は **単一キーのみ**削除。複数キー削除は `purge({ keys })`
+
+移行例:
+
+```ts
+// 以前（v0.5 以前）— 全削除
+await cache.clear();
+
+// 以後（v0.6）— 全削除
+await cache.purge({ all: true });
+
+// 単一キー
+await cache.remove("a");
+
+// 複数キー
+await cache.purge({ keys: ["a", "b"] });
+```
 
 ## 破壊的変更（v0.4）
 
