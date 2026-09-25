@@ -70,9 +70,8 @@ const cache = createCache({
 | `@b4moss/cachian/methods/set` | `set` |
 | `@b4moss/cachian/methods/update` | `update` |
 | `@b4moss/cachian/methods/upsert` | `upsert` |
-| `@b4moss/cachian/methods/remove` | `remove` |
+| `@b4moss/cachian/methods/remove` | `remove` (single key only) |
 | `@b4moss/cachian/methods/has` | `has` |
-| `@b4moss/cachian/methods/clear` | `clear` |
 | `@b4moss/cachian/methods/purge` | `purge` |
 
 Entry shape in storage: `{ expiresAt: number, data: unknown, createdAt?: number }` (localStorage stores JSON strings; IndexedDB stores objects). New `set` writes always include `createdAt`.
@@ -105,6 +104,11 @@ await cache.purge({ expired: true });
 ```
 
 Legacy entries without `createdAt` are left alone by `olderThan` and absolute-time modes, but **are removed** by `{ expired: true }` when `expiresAt` is past. Mixing `olderThan` with `createdBefore` / `createdAfter`, or mixing `{ expired: true }` with any other mode, throws `TypeError`.
+
+## Breaking changes (v0.6)
+
+- Public `clear()` MethodDef / `@b4moss/cachian/methods/clear` removed — use `purge({ all: true })`.
+- `remove(key)` deletes a **single** key only; multi-key deletion is `purge({ keys })`.
 
 ## Breaking changes (v0.4)
 
