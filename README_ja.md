@@ -110,6 +110,22 @@ await cache.purge({ expired: true });
 - 公開 `clear()` MethodDef / `@b4moss/cachian/methods/clear` を廃止 — 全削除は `purge({ all: true })`
 - `remove(key)` は **単一キーのみ**削除。複数キー削除は `purge({ keys })`
 
+移行例:
+
+```ts
+// 以前（v0.5 以前）— 全削除
+await cache.clear();
+
+// 以後（v0.6）— 全削除
+await cache.purge({ all: true });
+
+// 単一キー
+await cache.remove("a");
+
+// 複数キー
+await cache.purge({ keys: ["a", "b"] });
+```
+
 ## 破壊的変更（v0.4）
 
 - `createCache()` は固定フル API を返さず、`driver` + `methods` の指定が必須

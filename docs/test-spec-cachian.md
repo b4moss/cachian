@@ -2,9 +2,16 @@
 
 対象マイルストーン: `v0.6.0`（`clear` MethodDef 廃止・全削除は `purge({ all: true })` へ一本化 / `remove` 単一キー契約の明示）  
 関連: [#41](https://github.com/b4moss/cachian/issues/41) / 抽出元 `b4moss/jp-local-gov-id` のキャッシュロジック / モジュール化（core + drivers + methods）  
-作業ブランチ: `cursor/method-changes-remove-purge-2080`（base: `dev-v0.6.0`）  
+リリース: `v0.6.0`（tag / GitHub Release / npm `@b4moss/cachian@0.6.0`）  
 想定実装: リポジトリルートの単一パッケージ（`src/core/*` / `src/drivers/*` / `src/methods/*` ほか）  
 前提: `v0.4.0` のドライバ／メソッド分割および `v0.5.0` の `purge({ expired: true })` を継承し、本版は **破壊的変更**（公開 `clear` の廃止）
+
+### 破壊的変更サマリ（v0.6.0）
+
+| 旧 API | 新 API |
+|--------|--------|
+| `cache.clear()` / `@b4moss/cachian/methods/clear` | `cache.purge({ all: true })`（`methods/purge`） |
+| 複数キーを `remove` で削除しようとすること | `remove(key)` は単一キーのみ。複数は `purge({ keys })` |
 
 ## 1. 目的
 
