@@ -1,10 +1,10 @@
 # テスト仕様書: `@b4moss/cachian`（汎用ブラウザキャッシュ）
 
-対象マイルストーン: `v0.5.0`（`purge({ expired: true })` — TTL 期限切れの明示一括掃除）  
-関連: [#32](https://github.com/b4moss/cachian/issues/32) / 抽出元 `b4moss/jp-local-gov-id` のキャッシュロジック / モジュール化（core + drivers + methods）  
-作業ブランチ: `cursor/purge-expired-option-3fbc`  
+対象マイルストーン: `v0.6.0`（`clear` MethodDef 廃止・全削除は `purge({ all: true })` へ一本化 / `remove` 単一キー契約の明示）  
+関連: [#41](https://github.com/b4moss/cachian/issues/41) / 抽出元 `b4moss/jp-local-gov-id` のキャッシュロジック / モジュール化（core + drivers + methods）  
+作業ブランチ: `cursor/method-changes-remove-purge-2080`（base: `dev-v0.6.0`）  
 想定実装: リポジトリルートの単一パッケージ（`src/core/*` / `src/drivers/*` / `src/methods/*` ほか）  
-前提: `v0.4.0` のドライバ／メソッド分割契約を継承し、本版は **非破壊のオプション追加**
+前提: `v0.4.0` のドライバ／メソッド分割および `v0.5.0` の `purge({ expired: true })` を継承し、本版は **破壊的変更**（公開 `clear` の廃止）
 
 ## 1. 目的
 
@@ -15,7 +15,11 @@
 - 読み書きはすべて **非同期**（`Promise`）
 - **ブラウザ専用**: 選んだドライバの API が無い環境ではドライバ生成（または `createCache`）が失敗する（§3.3 / §5.6.1）
 - エントリ形式 `{ expiresAt, data, createdAt? }`・TTL（秒）・無効化・**操作時**のストレージ失敗握りつぶしは v0.3 系と同等
-- **パージ API**（全削除 / キー配列削除 / 経過時間削除 / 絶対時刻削除 / **期限切れ一括削除**）は `methods/purge` を選んだときのみ利用可能
+- **削除 API の役割分担**（v0.6.0）:
+  - 単一キー削除 → `methods/remove`（引数はキー名 1 つのみ）
+  - 複数キー / 条件付き / 全削除 → `methods/purge`（`{ keys }` / `{ all: true }` / その他モード）
+- **パージ API**（全削除 / キー配列削除 / 経過時間削除 / 絶対時刻削除 / 期限切れ一括削除）は `methods/purge` を選んだときのみ利用可能
+- **公開 `clear` MethodDef は廃止**（v0.6.0）。全削除は `purge({ all: true })` へ移譲する。ドライバ内部の `StorageAdapter.clear` は実装詳細として残してよい
 - **本仕様の直接対象外**: `jp-local-gov-id` への配線、CDN 配信の実行時検証、利用側による任意カスタムドライバの公開保証（内部 `StorageAdapter` 形状は実装詳細）
 
 ## 2. 用語
@@ -52,10 +56,11 @@
 | `@b4moss/cachian/methods/upsert` | `upsert` | MethodDef |
 | `@b4moss/cachian/methods/remove` | `remove` | MethodDef |
 | `@b4moss/cachian/methods/has` | `has` | MethodDef |
-| `@b4moss/cachian/methods/clear` | `clear` | MethodDef |
 | `@b4moss/cachian/methods/purge` | `purge` | MethodDef |
 
-CDN（IIFE）は別エントリで両ドライバ + 全メソッドを束ねてよい（npm のツリーシェイク対象外）。本仕様の TC 必須対象は npm / ソースのサブパス契約とする。
+削除（v0.6.0）: `@b4moss/cachian/methods/clear`（公開 MethodDef / サブパス export ともに廃止）
+
+CDN（IIFE）は別エントリで両ドライバ + 公開メソッド（`clear` を除く 7 MethodDef）を束ねてよい（npm のツリーシェイク対象外）。本仕様の TC 必須対象は npm / ソースのサブパス契約とする。
 
 ### 3.2 定数
 
@@ -163,14 +168,21 @@ type MethodDef<M extends object = object> = {
 | `set` | `set(key, data, options?)` | `Promise<void>` | **常に**新規エントリとして保存（`createdAt` / `expiresAt` を再生成） |
 | `update` | `update(key, data, options?)` | `Promise<void>` | 有効な既存があるときだけ更新（§3.7）。無ければ / 期限切れなら no-op |
 | `upsert` | `upsert(key, data, options?)` | `Promise<void>` | 有効なら `update`、無ければ `set`（§3.7） |
-| `remove` | `remove(key)` | `Promise<void>` | 当該物理キーを削除。無ければ no-op |
+| `remove` | `remove(key)` | `Promise<void>` | **単一の論理キーのみ**削除（§3.5.1）。無ければ no-op |
 | `has` | `has(key)` | `Promise<boolean>` | 有効エントリがあれば `true`（期限切れは削除して `false`） |
-| `clear` | `clear()` | `Promise<void>` | 本インスタンスが管理する範囲のみ削除（§5.5） |
-| `purge` | `purge(options)` | `Promise<void>` | モード選択によるパージ（§3.6 / §5.8） |
+| `purge` | `purge(options)` | `Promise<void>` | モード選択によるパージ（§3.7 / §5.8）。全削除は `{ all: true }`（§5.5） |
 
 `set` / `update` / `upsert` の `options.ttlSeconds` が不正な場合は **`TypeError`**（ストレージへ書かない）。いずれも `CacheSetOptions`（`{ ttlSeconds?: number }`）を受け取る。
 
-テストやアプリが「フル相当」を欲する場合は、明示的に 8 MethodDef をすべて渡す。
+テストやアプリが「フル相当」を欲する場合は、明示的に **7 MethodDef**（`get` / `set` / `update` / `upsert` / `remove` / `has` / `purge`）をすべて渡す。公開 `clear` MethodDef は **存在しない**（v0.6.0）。
+
+#### 3.5.1 `remove(key)` — 単一キー削除
+
+- シグネチャ: `remove(key: string): Promise<void>`
+- **引数はキー名を 1 つだけ**受け付ける。複数キーや配列を受け付ける契約ではない
+- 複数キーの一括削除は `purge({ keys: string[] })`（§3.7 / TC-C18）を使う
+- 存在しないキーは no-op（reject しない）
+- `enabled: false` のとき no-op（§5.4）
 
 ### 3.6 エントリ形式
 
@@ -216,8 +228,8 @@ type CachePurgeOptions =
 
 | モード | オプション | 振る舞い |
 |--------|------------|----------|
-| すべてパージ | `{ all: true }` | `clear()` と同一の削除範囲（§5.5）。`clear` MethodDef 未選択でも `purge` 単体でこのモードは動作すること |
-| キー指定 | `{ keys: string[] }` | 論理キー配列の各要素を `remove` 相当で削除。空配列は no-op。存在しないキーは no-op |
+| すべてパージ | `{ all: true }` | 本インスタンスが管理する範囲をすべて削除（§5.5）。v0.6.0 で廃止した公開 `clear()` の代替。`purge` 単体でこのモードは動作すること |
+| キー指定 | `{ keys: string[] }` | 論理キー配列の各要素を `remove` 相当で削除（複数キー削除の正規手段）。空配列は no-op。存在しないキーは no-op |
 | 経過時間 | `{ olderThan: CachePurgeOlderThan }` | 指定期間より **古い** エントリのみ削除（§5.8.3） |
 | 絶対時刻（以前） | `{ createdBefore: AbsoluteTime }` | `createdAt < threshold` のエントリのみ削除（§5.8.4） |
 | 絶対時刻（以後） | `{ createdAfter: AbsoluteTime }` | `createdAt > threshold` のエントリのみ削除（§5.8.4） |
@@ -356,7 +368,7 @@ import { get } from "@b4moss/cachian/methods/get";
 import { set } from "@b4moss/cachian/methods/set";
 // ... 他メソッド
 
-const ALL_METHODS = [get, set, update, upsert, remove, has, clear, purge] as const;
+const ALL_METHODS = [get, set, update, upsert, remove, has, purge] as const;
 
 function createTestCache(
   options: Omit<CreateCacheOptions, "driver" | "methods"> & {
@@ -423,15 +435,19 @@ function createTestCache(
 
 - `get` → 常に `null`（既存エントリがあっても読まない・消さない）
 - `has` → 常に `false`
-- `set` / `update` / `upsert` / `remove` / `clear` / `purge` → no-op（ストレージを変更しない）
+- `set` / `update` / `upsert` / `remove` / `purge` → no-op（ストレージを変更しない）
 - `purge` のオプションが不正な場合でも、`enabled: false` なら **バリデーションより先に no-op してよい**。ただし `enabled: true` では不正オプションは必ず `TypeError`
 
-### 5.5 `clear` / `purge({ all: true })` の範囲
+### 5.5 `purge({ all: true })` の範囲
+
+全削除の正規公開 API は **`purge({ all: true })` のみ**（v0.6.0 で公開 `clear()` は廃止）。
 
 | ドライバ | 削除範囲 |
 |----------|----------|
 | localStorage | **物理キーが `keyPrefix` で始まるもののみ**。他アプリ・他 prefix のキーは消さない |
-| IndexedDB | 当該 `dbName` + `storeName` の object store を `clear()` |
+| IndexedDB | 当該 `dbName` + `storeName` の object store 全体（ドライバ内部の store `clear` 相当） |
+
+ドライバ層の `StorageAdapter.clear(keyPrefix)` は `purge({ all: true })` の実装に使ってよいが、Cache 公開面には出さない。
 
 ### 5.6 ストレージ不可・書き込み失敗
 
@@ -460,12 +476,14 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 #### 5.8.1 `{ all: true }`
 
-- §5.5 と同等
-- `clear` MethodDef を選んでいれば `clear()` と同じ範囲。`purge` のみでも `{ all: true }` は動作する
+- §5.5 の削除範囲どおり
+- 公開 `clear` MethodDef は無い。全削除はこのモードのみ
+- `methods: [purge]` のみでも `{ all: true }` は動作する
 
 #### 5.8.2 `{ keys: string[] }`
 
 - 配列順に各論理キーを物理キーへ変換して削除
+- **複数キー削除の正規手段**（`remove` は単一キーのみ — §3.5.1）
 - 空配列 `[]` → no-op（reject しない）
 - 重複キーがあっても追加の副作用なし
 - 他キーは残す
@@ -513,7 +531,8 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 - **操作**: `createCache({ driver: localStorageDriver(), methods: [get, set, remove] })`
 - **期待**: `typeof cache.get/set/remove === "function"`
-- **期待**: `"purge" in cache === false`（および `update` / `upsert` / `has` / `clear` も同様に無し）
+- **期待**: `"purge" in cache === false`（および `update` / `upsert` / `has` も同様に無し）
+- **期待**: `"clear" in cache === false`（公開 `clear` は v0.6.0 で廃止済みのため、どの `methods` 組み合わせでも付かない）
 
 ### TC-M04: ルートから drivers / methods を import できない
 
@@ -522,8 +541,9 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 ### TC-M05: サブパスから個別に import できる
 
-- **操作**: 各 `@b4moss/cachian/drivers/*` / `@b4moss/cachian/methods/*` から該当シンボルを import
+- **操作**: 各 `@b4moss/cachian/drivers/*` / `@b4moss/cachian/methods/{get,set,update,upsert,remove,has,purge}` から該当シンボルを import
 - **期待**: いずれも関数（または MethodDef オブジェクト）として取得できる
+- **期待**: `@b4moss/cachian/methods/clear` は package exports に存在しない（TC-P02）
 
 ### TC-M06: `get` + `set` + `remove` のみで基本読み書きができる
 
@@ -598,16 +618,17 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 ### TC-C10: `enabled: false`
 
 - **前提**: 事前に別インスタンス（`enabled: true`）で `"k"` を保存済みでもよい
-- **操作**: `createTestCache({ enabled: false })` で `get` / `set` / `update` / `upsert` / `remove` / `has` / `clear` / `purge`
+- **操作**: `createTestCache({ enabled: false })` で `get` / `set` / `update` / `upsert` / `remove` / `has` / `purge`（`purge({ all: true })` および代表的な他モードを含む）
 - **期待**: `get` → `null`、`has` → `false`
 - **期待**: 書き込み系・削除系のあとでも、既存ストレージ内容が変わらない
 
-### TC-C11: `remove`
+### TC-C11: `remove`（単一キーのみ）
 
-- **前提**: `"k"` を保存済み
+- **前提**: `"k"` を保存済み。`methods` に `remove` を含む
 - **操作**: `await remove("k")` → `await get("k")`
 - **期待**: `null`
 - **期待**: 存在しないキーの `remove` は reject しない
+- **期待（契約）**: 公開シグネチャは `remove(key: string)`。複数キー削除は `purge({ keys })`（TC-C18）であり、`remove` の責務外
 
 ### TC-C12: `has` は有効時のみ true
 
@@ -621,10 +642,12 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **期待**: 後者は `null`
 - **期待**: localStorage 上の物理キーは `"a:k"`（前者）
 
-### TC-C14: `clear` が prefix 範囲のみ（localStorage） / store 全体（IndexedDB）
+### TC-C14: `purge({ all: true })` が prefix 範囲のみ（localStorage） / store 全体（IndexedDB）
 
+- **前提**: `methods` に `purge` を含む（公開 `clear` は使わない）
 - **localStorage**: prefix `"app:"` のインスタンスで `set` したキーだけ消え、prefix なしで置いた他キーは残る
 - **IndexedDB**: 同一 `dbName`/`storeName` 内の全エントリが消える。別 `storeName` のインスタンスのデータは残ってよい
+- **操作**: `await purge({ all: true })`
 
 ### TC-C15: localStorage 未定義なら環境エラー
 
@@ -640,12 +663,13 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **期待**: reject しない
 - **期待**: 続く `get("k")` は `null`
 
-### TC-C17: `purge({ all: true })` が `clear` 相当
+### TC-C17: `purge({ all: true })` が自インスタンス管理分をすべて削除する
 
-- **前提**: 複数キーを保存済み（localStorage なら他 prefix のキーも用意）
+- **前提**: 複数キーを保存済み（localStorage なら他 prefix のキーも用意）。`methods` に `purge` を含む
 - **操作**: `await purge({ all: true })`
 - **期待**: §5.5 / TC-C14 と同じ削除範囲。自インスタンス管理分はすべて miss
 - **期待**: reject しない
+- **備考**: v0.6.0 以前の公開 `clear()` と同等の範囲を、本モードが正規に担う
 
 ### TC-C18: `purge({ keys })` が指定キーのみ削除
 
@@ -654,6 +678,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **期待**: `get("a")` / `get("c")` は `null`、`get("b")` は hit
 - **期待**: `await purge({ keys: [] })` は no-op
 - **期待**: 存在しないキーを含む配列でも reject しない
+- **備考**: 複数キー削除は本モードが正規手段（`remove` は単一キーのみ — TC-C11）
 
 ### TC-C19: `purge({ olderThan })` が古いエントリのみ削除
 
@@ -814,9 +839,11 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **操作**: `await set("https://example/data.json", { x: 1 })`
 - **期待**: `getItem` で得た文字列を `JSON.parse` すると `{ expiresAt: number, data: { x: 1 }, createdAt: number }`
 
-### TC-LS03: `clear` が他 prefix を消さない
+### TC-LS03: `purge({ all: true })` が他 prefix を消さない
 
 - §5.5 / TC-C14 の localStorage 詳細。必須
+- **操作**: prefix 付きインスタンスで `await purge({ all: true })`
+- **期待**: 自 prefix 配下のみ削除。他 prefix / 無 prefix は残る
 
 ### TC-LS04: `purge({ olderThan })` が他 prefix を消さない
 
@@ -872,8 +899,9 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - TC-C04（TTL）
 - TC-C08（期限切れ削除）
 - TC-C10（enabled: false）
-- TC-C11（remove）
+- TC-C11（remove・単一キー）
 - TC-C13（keyPrefix。**仕様は物理キーへ prefix を載せる**）
+- TC-C14（`purge({ all: true })` の store 範囲）
 - TC-C17（`purge` all）
 - TC-C18（`purge` keys）
 - TC-C19（`purge` olderThan）
@@ -899,7 +927,8 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 ### TC-P02: サブパス exports が package.json に定義されている
 
-- **期待**: `exports` に `.` / `./drivers/localStorage` / `./drivers/indexedDB` / `./methods/{get,set,update,upsert,remove,has,clear,purge}` がある
+- **期待**: `exports` に `.` / `./drivers/localStorage` / `./drivers/indexedDB` / `./methods/{get,set,update,upsert,remove,has,purge}` がある
+- **期待**: `./methods/clear` は **無い**（v0.6.0 で廃止）
 - **期待**: 各エントリに `types` / `import`（および CJS を維持するなら `require`）が解決できる
 
 ### TC-P03: `sideEffects: false`
@@ -913,19 +942,20 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 ## 11. 受け入れ条件
 
 1. §6 の TC-M をパス
-2. §7 の TC-C を localStorage（全 MethodDef）ですべてパス（TC-C36〜TC-C40 を含む）
+2. §7 の TC-C を localStorage（公開 7 MethodDef）ですべてパス（TC-C36〜TC-C40 を含む）
 3. §8 の TC-LS をパス（TC-LS06 を含む）
 4. §9 の TC-IDB をパス（TC-IDB05 の環境ガード、および TC-IDB06 の再実行セットを含む）
-5. §10 の TC-P をパス
+5. §10 の TC-P をパス（`methods/clear` が exports に無いこと含む）
 6. `npm test` および `npm run build` が CI / ローカルで成功
 7. v0.4 破壊的変更（組み立て必須・`storage` 文字列廃止・ルートからの drivers/methods 非再エクスポート）の契約を維持する
-8. v0.5.0 の `purge({ expired: true })` は **非破壊の追加**であり、既存モードの意味を変えないこと
-9. （推奨）localStorage + `get`/`set`/`remove` のみの minify サイズが、旧フル一体バンドルより明確に小さいこと
+8. v0.5.0 の `purge({ expired: true })` の意味を変えないこと
+9. **v0.6.0 破壊的変更**: 公開 `clear` MethodDef / `@b4moss/cachian/methods/clear` を廃止し、全削除は `purge({ all: true })` へ移譲すること。`remove` は単一キーのみ（複数キーは `purge({ keys })`）
+10. （推奨）localStorage + `get`/`set`/`remove` のみの minify サイズが、旧フル一体バンドルより明確に小さいこと
 
 ## 12. トレーサビリティ
 
-| 抽出元 / 旧 cachian (v0.3) | v0.4 / v0.5 |
-|----------------------------|-------------|
+| 抽出元 / 旧 cachian (v0.3) | v0.4 / v0.5 / v0.6 |
+|----------------------------|-------------------|
 | `createCache()` 引数なし・全メソッド | `createCache({ driver, methods })` 必須組み立て |
 | `storage: "localStorage"` | `localStorageDriver()` |
 | `storage: "indexedDB", dbName, storeName` | `indexedDBDriver({ dbName, storeName })` |
@@ -936,5 +966,8 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 | （なし） | サブパス分割 + `sideEffects: false` |
 | 環境非対応時 | `CachianEnvironmentError`（ドライバ生成時または `createCache` 時） |
 | 期限切れは操作時の遅延削除のみ | 同左 + **`purge({ expired: true })`（v0.5.0）** |
+| 公開 `clear()`（v0.5 まで） | **廃止（v0.6.0）** → `purge({ all: true })` |
+| 単一キー削除 | `remove(key)`（v0.6.0 でも単一キーのみを明示） |
+| 複数キー削除 | `purge({ keys })`（`remove` の責務外） |
 
 本仕様は cachian 単体の契約であり、`createLocalGovClient` のオプション名の互換は **jp-local-gov-id 配線時の別仕様**とする。

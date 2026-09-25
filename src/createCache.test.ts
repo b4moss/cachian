@@ -13,7 +13,6 @@ import { update } from "./methods/update";
 import { upsert } from "./methods/upsert";
 import { remove } from "./methods/remove";
 import { has } from "./methods/has";
-import { clear } from "./methods/clear";
 import { purge } from "./methods/purge";
 import type { CacheEntry } from "./types";
 import type { CreateCacheOptions, MethodDef } from "./core/types";
@@ -26,7 +25,6 @@ const ALL_METHODS = [
   upsert,
   remove,
   has,
-  clear,
   purge,
 ] as const satisfies readonly MethodDef[];
 
@@ -276,7 +274,6 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     await cache.update("k", "upd");
     await cache.upsert("k", "ups");
     await cache.remove("k");
-    await cache.clear();
     await cache.purge({ all: true });
     await cache.purge({ keys: ["k"] });
     await cache.purge({ olderThan: { seconds: 0 } });
@@ -284,6 +281,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect([...store.entries()]).toEqual([...snapshot.entries()]);
   });
 
+  // Single-key only; multi-key deletion is purge({ keys }) — TC-C18
   it("TC-C11: remove", async () => {
     const cache = createTestCache();
     await cache.set("k", 1);
@@ -316,12 +314,12 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect(store.has("k")).toBe(false);
   });
 
-  it("TC-C14 / TC-LS03: clear only removes own prefix keys", async () => {
+  it("TC-C14 / TC-LS03: purge({ all: true }) only removes own prefix keys", async () => {
     store.set("other", "keep");
     const cache = createTestCache({ keyPrefix: "app:" });
     await cache.set("k", 1);
     await cache.set("m", 2);
-    await cache.clear();
+    await cache.purge({ all: true });
     expect(store.has("app:k")).toBe(false);
     expect(store.has("app:m")).toBe(false);
     expect(store.get("other")).toBe("keep");
@@ -386,7 +384,7 @@ describe("localStorage backend (TC-C / TC-LS)", () => {
     expect(parsed.data).toEqual({ x: 1 });
   });
 
-  it("TC-C17: purge({ all: true }) matches clear scope", async () => {
+  it("TC-C17: purge({ all: true }) clears own prefix / managed scope", async () => {
     store.set("other", "keep");
     const cache = createTestCache({ keyPrefix: "app:" });
     await cache.set("k", 1);
@@ -1023,7 +1021,6 @@ describe("indexedDB backend (TC-IDB)", () => {
     await cache.update("k", "upd");
     await cache.upsert("k", "ups");
     await cache.remove("k");
-    await cache.clear();
     await cache.purge({ all: true });
     await cache.purge({ keys: ["k"] });
     await cache.purge({ olderThan: { seconds: 0 } });
@@ -1048,12 +1045,12 @@ describe("indexedDB backend (TC-IDB)", () => {
     expect(raw).toMatchObject({ data: 1 });
   });
 
-  it("TC-C14 indexedDB: clear only current store", async () => {
+  it("TC-C14 indexedDB: purge({ all: true }) only current store", async () => {
     const a = await freshCreate({ storeName: "storeA" });
     const b = await freshCreate({ storeName: "storeB" });
     await a.set("k", 1);
     await b.set("k", 2);
-    await a.clear();
+    await a.purge({ all: true });
     expect(await a.get("k")).toBeNull();
     expect(await b.get("k")).toBe(2);
   });

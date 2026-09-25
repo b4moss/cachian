@@ -14,7 +14,6 @@ const entries = {
   "methods/upsert": resolve(root, "src/methods/upsert.ts"),
   "methods/remove": resolve(root, "src/methods/remove.ts"),
   "methods/has": resolve(root, "src/methods/has.ts"),
-  "methods/clear": resolve(root, "src/methods/clear.ts"),
   "methods/purge": resolve(root, "src/methods/purge.ts"),
 };
 

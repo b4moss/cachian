@@ -1,6 +1,6 @@
 {
   "name": "@b4moss/cachian",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "description": "Universal browser cache helper with localStorage and IndexedDB backends",
   "type": "module",
   "sideEffects": false,
@@ -54,11 +54,6 @@
       "types": "./dist/methods/has.d.ts",
       "import": "./dist/methods/has.js",
       "require": "./dist/methods/has.cjs"
-    },
-    "./methods/clear": {
-      "types": "./dist/methods/clear.d.ts",
-      "import": "./dist/methods/clear.js",
-      "require": "./dist/methods/clear.cjs"
     },
     "./methods/purge": {
       "types": "./dist/methods/purge.d.ts",
