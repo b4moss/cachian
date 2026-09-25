@@ -110,6 +110,22 @@ Legacy entries without `createdAt` are left alone by `olderThan` and absolute-ti
 - Public `clear()` MethodDef / `@b4moss/cachian/methods/clear` removed — use `purge({ all: true })`.
 - `remove(key)` deletes a **single** key only; multi-key deletion is `purge({ keys })`.
 
+Migration:
+
+```ts
+// before (v0.5 and earlier) — full clear
+await cache.clear();
+
+// after (v0.6) — full clear
+await cache.purge({ all: true });
+
+// single key
+await cache.remove("a");
+
+// multiple keys
+await cache.purge({ keys: ["a", "b"] });
+```
+
 ## Breaking changes (v0.4)
 
 - `createCache()` no longer returns a fixed full API; pass `driver` + `methods`.
