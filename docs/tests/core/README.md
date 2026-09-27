@@ -2,7 +2,8 @@
 
 対象マイルストーン: `v0.6.0`  
 ドメイン: `core`（specs と同じ切り）。ドライバ固有は [`../drivers/`](../drivers/)、メソッド固有は [`../methods/`](../methods/)。  
-正本の API 契約: [`docs/specs/core/`](../../specs/core/)
+正本の API 契約: [`docs/specs/core/`](../../specs/core/)  
+実装テスト SoT: **`src/createCache.test.ts`**（本ドキュメントの TC ラベルは当該ファイルの `it("…")` タイトルに合わせる。同 ID が複数ある場合はタイトル全文／括弧注記で区別する）。
 
 ### 破壊的変更サマリ（v0.6.0）
 
@@ -18,7 +19,7 @@
 - キー・値はドメイン非依存（URL 専用にしない）
 - **ドライバ**（localStorage / IndexedDB）と **メソッド**（`get` / `set` / …）を分割し、利用側が必要なものだけを import・組み立てる
 - 読み書きはすべて **非同期**（`Promise`）
-- **ブラウザ専用**: 選んだドライバの API が無い環境ではドライバ生成（または `createCache`）が失敗する（§3.3 / §5.6.1）
+- **ブラウザ専用**: 選んだドライバの API が無い環境では **ドライバ生成時**に失敗する（`assertStorageAvailable`。契約は specs/core）
 - エントリ形式 `{ expiresAt, data, createdAt? }`・TTL（秒）・無効化・**操作時**のストレージ失敗握りつぶしは v0.3 系と同等
 - **削除 API の役割分担**（v0.6.0）:
   - 単一キー削除 → `methods/remove`（引数はキー名 1 つのみ）
@@ -39,7 +40,7 @@
 | `expiresAt` | 期限切れ判定用のエポックミリ秒。`Date.now() >= expiresAt` なら期限切れ。遅延削除（`get` / `has` 等）および `purge({ expired: true })` で参照する |
 | `createdAt` | 書き込み時刻のエポックミリ秒。`purge({ olderThan })` および絶対時刻パージの年齢判定に使う。新規 `set` / miss 時 `upsert` では必須付与。`update` / hit 時 `upsert` では維持。**`purge({ expired: true })` では参照しない** |
 | TTL | Time To Live（秒）。`set` 時に `expiresAt = Date.now() + ttlSeconds * 1000` |
-| 絶対時刻 | `purge` の `createdBefore` / `createdAfter` に渡す時刻。ISO 8601 文字列、またはエポック秒／ミリ秒の数値（§3.7.3） |
+| 絶対時刻 | `purge` の `createdBefore` / `createdAfter` に渡す時刻。ISO 8601 文字列、またはエポック秒／ミリ秒の数値（methods: AbsoluteTime） |
 | 論理キー | 呼び出し側が渡す `key` 文字列 |
 | 物理キー | 実際にストレージへ書くキー。`keyPrefix` がある場合は `keyPrefix + 論理キー` |
 | miss | `get` が `null` を返すこと（未保存・期限切れ・壊れたエントリ・無効化・操作時のストレージ失敗） |
@@ -50,9 +51,8 @@
 
 実装先の目安:
 
-- `src/createCache.test.ts` または `src/core/createCache.test.ts`（必須）
-- 必要に応じて drivers / methods / entry の単体テスト
-- ランナー: Vitest
+- **`src/createCache.test.ts`**（現行の単一テストファイル。必須）
+- ランナー: Vitest（`npm test` → `vitest run --coverage`）
 
 テストヘルパ（推奨）:
 
@@ -101,7 +101,8 @@ function createTestCache(
 - カレンダー月／うるう年に基づく期間換算
 - ISO 8601 の全亜種
 - `update` が「存在しないキーで throw する」契約（本仕様は no-op）
-- バンドラ実機でのツリーシェイクバイト数の CI 固定（§9 のパッケージ面・任意のサイズスモークは別）
+- バンドラ実機でのツリーシェイクバイト数の CI 固定（パッケージ面・任意のサイズスモークは別）
+- CDN / IIFE（`src/cdn.ts` / `createFullCache`）のブラウザ手動確認
 
 ## 4. 振る舞い共通契約（参照）
 
@@ -118,7 +119,7 @@ function createTestCache(
 - `Date.now() >= expiresAt` のエントリは **期限切れ**
 - `get` / `has` は期限切れを検知したらストレージから削除し、それぞれ `null` / `false`
 - `update` は期限切れを検知したら削除して no-op。`upsert` は削除してから新規 `set` 相当
-- 触られない期限切れエントリはストレージに残ってよい（遅延削除）。明示掃除は `purge({ expired: true })`（§3.7.6）
+- 触られない期限切れエントリはストレージに残ってよい（遅延削除）。明示掃除は `purge({ expired: true })`（下記 `{ expired: true }`）
 - `ttlSeconds: 0` は「即期限切れになりうる」エントリ。`get` は書き込みと同時刻比較で miss になり得る。許容する
 
 ### 壊れたエントリ
@@ -174,21 +175,21 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 ### `{ all: true }`
 
-- §5.5 の削除範囲どおり
+- `purge({ all: true })` の削除範囲どおり
 - 公開 `clear` MethodDef は無い。全削除はこのモードのみ
 - `methods: [purge]` のみでも `{ all: true }` は動作する
 
 ### `{ keys: string[] }`
 
 - 配列順に各論理キーを物理キーへ変換して削除
-- **複数キー削除の正規手段**（`remove` は単一キーのみ — §3.5.1）
+- **複数キー削除の正規手段**（`remove` は単一キーのみ — methods: `remove`）
 - 空配列 `[]` → no-op（reject しない）
 - 重複キーがあっても追加の副作用なし
 - 他キーは残す
 
 ### `{ olderThan }`
 
-- 期間換算・判定は §3.7.1 / §3.7.2
+- 期間換算・判定は methods: `olderThan`
 - 列挙対象:
   - localStorage: `keyPrefix` で始まる物理キー
   - IndexedDB: 当該 store 内で物理キーが `keyPrefix` で始まるもの（prefix 空なら store 内全件）
@@ -198,19 +199,19 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 ### `{ createdBefore }` / `{ createdAfter }`
 
-- パース・判定は §3.7.3 / §3.7.5
-- 列挙対象・壊れたエントリの扱いは §5.8.3 と同じ
+- パース・判定は methods: AbsoluteTime / 絶対時刻削除
+- 列挙対象・壊れたエントリの扱いは olderThan と同じ列挙範囲（`keyPrefix` 配下）
 - `createdAt` 無しの正当なエントリは **残す**
 - 境界ちょうど（`===`）のエントリは **残す**
-- `olderThan` との混在は §3.7.4 のとおり `TypeError`
+- `olderThan` との混在は methods: モード混在どおり `TypeError`
 
 ### `{ expired: true }`
 
-- 判定は §3.7.6（`Date.now() >= expiresAt`）
-- 列挙対象・壊れたエントリの扱いは §5.8.3 と同じ
-- `createdAt` 無しの正当なエントリでも、期限切れなら **削除する**（§5.8.3 / §5.8.4 と異なる点）
+- 判定は `Date.now() >= expiresAt`（`isExpired`）
+- 列挙対象・壊れたエントリの扱いは olderThan と同じ列挙範囲（`keyPrefix` 配下）
+- `createdAt` 無しの正当なエントリでも、期限切れなら **削除する**（年齢・絶対時刻パージで legacy を残す点と異なる）
 - 未期限切れは **残す**（`createdAt` の新旧は問わない）
-- 他モード（`all` / `keys` / `olderThan` / `createdBefore` / `createdAfter`）との混在は §3.7.4 のとおり `TypeError`
+- 他モード（`all` / `keys` / `olderThan` / `createdBefore` / `createdAfter`）との混在は methods: モード混在どおり `TypeError`
 
 ## 5. 組み立て・モジュール面（TC-M）
 
@@ -241,7 +242,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 - **操作**: 各 `@b4moss/cachian/drivers/*` / `@b4moss/cachian/methods/{get,set,update,upsert,remove,has,purge}` から該当シンボルを import
 - **期待**: いずれも関数（または MethodDef オブジェクト）として取得できる
-- **期待**: `@b4moss/cachian/methods/clear` は package exports に存在しない（TC-P02）
+- **期待**: `@b4moss/cachian/methods/clear` は package exports に存在しない（`package.json` exports / TC-M05）
 
 ### TC-M06: `get` + `set` + `remove` のみで基本読み書きができる
 
@@ -251,7 +252,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 ## 6. コアケース（TC-C）— ドライバ非依存
 
-特記なき限り、テストヘルパで **localStorage ドライバ + 全 MethodDef** を組み立てる。IndexedDB でも同型の代表ケースを再実行すること（§9）。
+特記なき限り、テストヘルパで **localStorage ドライバ + 全 MethodDef** を組み立てる。IndexedDB でも同型の代表ケースを再実行すること（TC-IDB06）。
 
 ### TC-C01: 既定オプションで set → get hit
 
@@ -354,7 +355,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **期待**: `CachianEnvironmentError`（`instanceof` 可）。メッセージに `localStorage` を含み、ブラウザ環境が必要である旨が分かる
 - **期待**: ストレージへ一切書き込まない
 
-### TC-C16: 書き込み失敗を握りつぶす（§5.6.2）
+### TC-C16: 書き込み失敗を握りつぶす（core: 操作時失敗の握りつぶし）
 
 - **前提**: 生成は成功済み。localStorage の `setItem` が throw（QuotaExceeded 相当）。IndexedDB は put 失敗を stub
 - **操作**: `await set("k", hugeOrAny)`
@@ -365,7 +366,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 - **前提**: 複数キーを保存済み（localStorage なら他 prefix のキーも用意）。`methods` に `purge` を含む
 - **操作**: `await purge({ all: true })`
-- **期待**: §5.5 / TC-C14 と同じ削除範囲。自インスタンス管理分はすべて miss
+- **期待**: `purge({ all: true })` 範囲 / TC-C14 と同じ削除範囲。自インスタンス管理分はすべて miss
 - **期待**: reject しない
 - **備考**: v0.6.0 以前の公開 `clear()` と同等の範囲を、本モードが正規に担う
 
@@ -446,7 +447,7 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 ### TC-C28: `purge({ createdAfter })` および範囲
 
 - **操作**: `createdAfter` 単独、および `createdBefore` + `createdAfter` の範囲
-- **期待**: §3.7.5 の厳密不等号どおり
+- **期待**: 絶対時刻の厳密不等号どおり
 
 ### TC-C29: `AbsoluteTime` が ISO / 秒 / ミリ秒を解釈する
 
@@ -471,22 +472,25 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 - **操作**: `update` / `upsert` に `ttlSeconds: -1` 等
 - **期待**: `TypeError`（メッセージに `ttlSeconds`）。ストレージ不変
 
-### TC-C33: import だけでは throw しない
+### TC-C22（環境）: import だけでは throw しない
 
+- **コード上のタイトル**: `TC-C22: importing the module alone does not throw`（update 系の TC-C22 と ID 重複）
 - **前提**: `localStorage` / `indexedDB` が未定義の環境（Node 相当）でもよい
-- **操作**: ルートおよびサブパスのモジュールを import（`createCache` / ドライバ関数を**呼ばない**）
+- **操作**: ルートモジュールを import（`createCache` / ドライバ関数を**呼ばない**）
 - **期待**: モジュール評価は成功する
 
-### TC-C34: localStorage アクセス時 throw も環境非対応
+### TC-C23（環境）: localStorage アクセス時 throw も環境非対応
 
+- **コード上のタイトル**: `TC-C23: localStorage accessor throw is also unsupported`
 - **前提**: `localStorage` のゲッターが throw するよう stub
-- **操作**: `localStorageDriver()` またはそれを使う `createCache`
+- **操作**: `localStorageDriver()` またはそれを使う生成
 - **期待**: `CachianEnvironmentError`（メッセージに `localStorage`）
 
-### TC-C35: API がある環境では生成できる
+### TC-C24（環境）: API がある環境では生成できる
 
-- **前提**: Map ベースの `localStorage` stub。IndexedDB は `fake-indexeddb` 投入後
-- **操作**: `localStorageDriver()` + 全 methods、および `indexedDBDriver()` + 全 methods
+- **コード上のタイトル**: `TC-C24: createCache succeeds when APIs are available`
+- **前提**: Map ベースの `localStorage` stub（IndexedDB 経路は別途 `fake-indexeddb`）
+- **操作**: `createTestCache()`
 - **期待**: throw せず Cache を返す。続く `set` / `get` は TC-C01 等どおり
 
 ### TC-C36: `purge({ expired: true })` が期限切れのみ削除
@@ -527,35 +531,26 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 
 ## 7. 公開面・パッケージ（TC-P）
 
+現行スイート（`src/createCache.test.ts` の `describe("package exports (TC-P)")`）の番号付けに合わせる。サブパス解決は TC-M05、`methods/clear` 不在は TC-M03/M04 と `package.json` 正本で担保。`sideEffects: false` は package.json 契約（専用 TC 番号は無し）。
+
 ### TC-P01: ルートから必要なシンボルを export
 
-- **期待**: `createCache` / `CachianEnvironmentError` / `DEFAULT_CACHE_TTL_SECONDS` /（任意）`CACHE_TTL_MS` および共通公開型が `@b4moss/cachian` から import できる
+- **期待**: `createCache` / `CachianEnvironmentError` / `DEFAULT_CACHE_TTL_SECONDS` / `CACHE_TTL_MS` が `@b4moss/cachian`（`./index`）から import できる
 - **期待**: ルートから `localStorageDriver` / `get` 等は export されない（TC-M04）
-- ビルド後 `dist` の types でも同様
 
-### TC-P02: サブパス exports が package.json に定義されている
-
-- **期待**: `exports` に `.` / `./drivers/localStorage` / `./drivers/indexedDB` / `./methods/{get,set,update,upsert,remove,has,purge}` がある
-- **期待**: `./methods/clear` は **無い**（v0.6.0 で廃止）
-- **期待**: 各エントリに `types` / `import`（および CJS を維持するなら `require`）が解決できる
-
-### TC-P03: `sideEffects: false`
-
-- **期待**: `package.json` に `"sideEffects": false` がある
-
-### TC-P04: ランタイム依存ゼロ
+### TC-P02: ランタイム依存ゼロ
 
 - **期待**: `package.json` の `dependencies` が空（または無し）。`fake-indexeddb` は `devDependencies` のみ
 
 ## 8. 受け入れ条件（core 関連）
 
-1. §6 の TC-M をパス
-2. §7 の TC-C を localStorage（公開 7 MethodDef）ですべてパス（TC-C36〜TC-C40 を含む）
-3. §8 の TC-LS をパス（TC-LS06 を含む）
-4. §9 の TC-IDB をパス（TC-IDB05 の環境ガード、および TC-IDB06 の再実行セットを含む）
-5. §10 の TC-P をパス（`methods/clear` が exports に無いこと含む）
+1. TC-M をパス
+2. TC-C を localStorage（公開 7 MethodDef）ですべてパス（TC-C36〜TC-C40 および環境系 TC-C22〜C24 を含む）
+3. TC-LS をパス（TC-LS06 を含む）
+4. TC-IDB をパス（TC-IDB05 の環境ガード、および TC-IDB06 の再実行セットを含む）
+5. TC-P01 / TC-P02 をパス。`package.json` exports に `methods/clear` が無いこと
 6. `npm test` および `npm run build` が CI / ローカルで成功
-7. v0.4 破壊的変更（組み立て必須・`storage` 文字列廃止・ルートからの drivers/methods 非再エクスポート）の契約を維持する
+7. v0.4 破壊的変更（組み立て必須・npm `createCache` から `storage` 文字列廃止・ルートからの drivers/methods 非再エクスポート）の契約を維持する（CDN `createFullCache` の `storage` は別面）
 8. v0.5.0 の `purge({ expired: true })` の意味を変えないこと
 9. **v0.6.0 破壊的変更**: 公開 `clear` MethodDef / `@b4moss/cachian/methods/clear` を廃止し、全削除は `purge({ all: true })` へ移譲すること。`remove` は単一キーのみ（複数キーは `purge({ keys })`）
 10. （推奨）localStorage + `get`/`set`/`remove` のみの minify サイズが、旧フル一体バンドルより明確に小さいこと
@@ -565,14 +560,14 @@ API は存在するが個別操作が失敗する場合、例外を外へ投げ�
 | 抽出元 / 旧 cachian (v0.3) | v0.4 / v0.5 / v0.6 |
 |----------------------------|-------------------|
 | `createCache()` 引数なし・全メソッド | `createCache({ driver, methods })` 必須組み立て |
-| `storage: "localStorage"` | `localStorageDriver()` |
+| `storage: "localStorage"`（npm `createCache`） | `localStorageDriver()`（CDN `createFullCache` には `storage` オプションあり） |
 | `storage: "indexedDB", dbName, storeName` | `indexedDBDriver({ dbName, storeName })` |
 | 固定 `Cache` 全メソッド | 選んだ MethodDef の交差型 |
 | `getCachedData` / `setCachedData`（jp-local-gov-id） | `cache.get` / `cache.set` |
 | `DEFAULT_CACHE_TTL_SECONDS` / `CACHE_TTL_MS` | 同名（ルート） |
 | 同期 API（抽出元） | 非同期 API |
 | （なし） | サブパス分割 + `sideEffects: false` |
-| 環境非対応時 | `CachianEnvironmentError`（ドライバ生成時または `createCache` 時） |
+| 環境非対応時 | `CachianEnvironmentError`（**現行はドライバ生成時**の `assertStorageAvailable`） |
 | 期限切れは操作時の遅延削除のみ | 同左 + **`purge({ expired: true })`（v0.5.0）** |
 | 公開 `clear()`（v0.5 まで） | **廃止（v0.6.0）** → `purge({ all: true })` |
 | 単一キー削除 | `remove(key)`（v0.6.0 でも単一キーのみを明示） |

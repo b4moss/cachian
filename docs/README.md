@@ -13,17 +13,19 @@ OKF の版索引は [`index.md`](./index.md)（`okf_version` のみ）。
 - **やること**
   - ドライバ（localStorage / IndexedDB）と必要な MethodDef（`get` / `set` / `update` / `upsert` / `remove` / `has` / `purge`）だけを選んで組み立てる
   - 非同期 API・TTL・エントリ形式 `{ expiresAt, data, createdAt? }`・条件付きパージ
-  - ブラウザ環境ガード（`CachianEnvironmentError`）
+  - ブラウザ環境ガード（`CachianEnvironmentError`。現行はドライバ factory 時）
+  - CDN / IIFE バンドル（`createFullCache` 含む。詳細は [`specs/core/`](./specs/core/)）
 - **やらぬこと**
   - Node / SSR 向けストレージ実装の保証
-  - CDN / IIFE の実行時検証を契約の必須対象にすること
-  - 任意カスタムドライバの公開保証（内部 `StorageAdapter` は実装詳細）
+  - CDN / IIFE のブラウザ手動確認を受け入れ TC の必須にすること
+  - 任意カスタム `StorageAdapter` の公開互換保証（形状は実装詳細。npm ルートからは非 export）
   - ドキュメントサイト（現状 out of scope）
 
 ## 技術方針
 
-- 単一 npm パッケージ `@b4moss/cachian`（TypeScript / Vitest）
+- 単一 npm パッケージ `@b4moss/cachian`（TypeScript / Vitest）。テスト正本ファイルは `src/createCache.test.ts`
 - 公開面はサブパス exports（ルートから drivers / methods を再エクスポートしない）
+- IIFE は `src/cdn.ts` → `dist/cachian.iife(.min).js`（グローバル `Cachian`）
 - `sideEffects: false`、ランタイム依存ゼロ
 - CI/CD 契約: [`specs/ops/ci-cd.md`](./specs/ops/ci-cd.md)（日本語: [`ci-cd.ja.md`](./specs/ops/ci-cd.ja.md)）
 - 開発ルール: [`charter/`](./charter/)（OKF v0.1: [`charter/okf/`](./charter/okf/)）

@@ -17,7 +17,7 @@
 
 ### TC-LS03: `purge({ all: true })` が他 prefix を消さない
 
-- §5.5 / TC-C14 の localStorage 詳細。必須
+- `purge({ all: true })` 範囲 / TC-C14 の localStorage 詳細。必須
 - **操作**: prefix 付きインスタンスで `await purge({ all: true })`
 - **期待**: 自 prefix 配下のみ削除。他 prefix / 無 prefix は残る
 

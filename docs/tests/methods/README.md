@@ -21,12 +21,12 @@
 | `purge({ all: true })` | TC-C14 / TC-C17 |
 | `purge({ keys })` | TC-C18 |
 | `purge({ olderThan })` | TC-C19〜C21 |
-| `set` / `update` / `upsert` | TC-C22〜C26 / TC-C32 |
+| `set` / `update` / `upsert` | TC-C22〜C26 / TC-C32（`update` 系。環境系の同 ID とはタイトルで区別） |
 | 絶対時刻パージ | TC-C27〜C31 |
 | `purge({ expired: true })` | TC-C36〜C40 |
 | MethodDef 組み立て | TC-M01〜M06 |
 
-ドライバ固有の purge 範囲は [`../drivers/`](../drivers/)（TC-LS / TC-IDB）。
+実装テスト SoT: `src/createCache.test.ts`。ドライバ固有の purge 範囲は [`../drivers/`](../drivers/)（TC-LS / TC-IDB）。
 
 ## 関連仕様
 
