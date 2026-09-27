@@ -46,7 +46,7 @@ npm run ci:local
 act pull_request -W .github/workflows/ci.yml
 ```
 
-既定は [`.actrc`](../.actrc)。`act` 実行時はゲートが Test/Build を必ず実行します（`ACT=true`）。Codecov は `main` 専用の別ワークフローであり、ローカル `act` の対象外です。
+既定は [`.actrc`](../../../.actrc)。`act` 実行時はゲートが Test/Build を必ず実行します（`ACT=true`）。Codecov は `main` 専用の別ワークフローであり、ローカル `act` の対象外です。
 
 Docker が無い環境（一部の Cloud Agent など）:
 
