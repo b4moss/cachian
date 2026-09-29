@@ -13,6 +13,7 @@
 
 [`@b4moss/jp-local-gov-id`](https://github.com/b4moss/jp-local-gov-id) のキャッシュロジックを外出し・汎用化したものです。
 
+Docs hub: [docs/README.md](./docs/README.md) · OKF 索引: [docs/index.md](./docs/index.md)  
 CI/CD: [docs/specs/ops/ci-cd.ja.md](./docs/specs/ops/ci-cd.ja.md)
 
 ## インストール

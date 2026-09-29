@@ -46,7 +46,7 @@ npm run ci:local
 act pull_request -W .github/workflows/ci.yml
 ```
 
-Defaults live in [`.actrc`](../.actrc). Under `act`, the CI gate always runs Test/Build (`ACT=true`). Codecov is a separate `main`-only workflow and is not part of local `act`.
+Defaults live in [`.actrc`](../../../.actrc). Under `act`, the CI gate always runs Test/Build (`ACT=true`). Codecov is a separate `main`-only workflow and is not part of local `act`.
 
 Without Docker (some Cloud Agent environments):
 
