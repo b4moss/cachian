@@ -11,8 +11,8 @@ This document locks the CI/CD direction for `@b4moss/cachian`, adapted from [`jp
 | Local gate | `npm run ci:local` (`act`) | Same |
 | Coverage | Codecov (informational) | Same |
 | SAST | CodeQL (non-blocking) | Same |
-| Supply chain | OpenSSF Scorecard on `main` | Same |
-| Dependabot | npm + github-actions (weekly) | Same (root only; no `/scripts` workspace) |
+| Supply chain | OpenSSF Scorecard weekly + `workflow_dispatch` | Same |
+| Dependabot | npm + github-actions (weekly) → `develop` | Same (root only; no `/scripts` workspace) |
 | npm publish | `data-v*` / `app-v*` → Release → provenance | Single tag `v*` → Release → provenance |
 | Docs site | `site-v*` → GitHub Pages | **Out of scope** (no docs site yet) |
 | Source monitor | MIC Excel hash cron | **Out of scope** (no external data) |
@@ -26,13 +26,15 @@ feature/* / cursor/*
   PR → develop / dev-*     ← CI (Gate → Test ‖ Build → "Test & Build")
         │
         ▼
-      main                 ← Codecov upload; Scorecard; stable default; tags v* only from here
+      main                 ← Codecov upload (non-docs); stable default; tags v* only from here
 ```
 
 - Day-to-day integration: `develop` (and versioned `dev-*` when needed).
 - Release cut: merge into `main`, then tag `vX.Y.Z` (or prerelease `vX.Y.Z-rc.N`) on `main`.
 - Do **not** rely on CI for PRs into `main` (same rule as the reference for stable branches).
-- Codecov runs **only** on push to `main` (i.e. after merge into `main`), not on PR CI.
+- Codecov runs **only** on push to `main` (i.e. after merge into `main`), not on PR CI; docs/markdown-only pushes are ignored.
+- OpenSSF Scorecard runs on a weekly schedule and `workflow_dispatch` (not on every `main` push).
+- Dependabot opens update PRs against **`develop`** so `ci.yml` runs (same base as human PRs).
 
 ## Local gate (required before PR)
 
@@ -46,7 +48,7 @@ npm run ci:local
 act pull_request -W .github/workflows/ci.yml
 ```
 
-Defaults live in [`.actrc`](../.actrc). Under `act`, the CI gate always runs Test/Build (`ACT=true`). Codecov is a separate `main`-only workflow and is not part of local `act`.
+Defaults live in [`.actrc`](../../../.actrc). Under `act`, the CI gate always runs Test/Build (`ACT=true`). Codecov is a separate `main`-only workflow and is not part of local `act`.
 
 Without Docker (some Cloud Agent environments):
 
@@ -67,12 +69,12 @@ Do not open or update a PR while this gate is failing.
 | File | Role | Status |
 |------|------|--------|
 | `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → aggregate **Test & Build** (no Codecov upload) | Implemented |
-| `.github/workflows/codecov.yml` | Push to `main` → test + upload `coverage/lcov.info` to Codecov | Implemented |
+| `.github/workflows/codecov.yml` | Push to `main` (non-docs) → test + upload `coverage/lcov.info` to Codecov | Implemented |
 | `.github/workflows/codeql.yml` | CodeQL on PR to `develop`/`dev-*`, push to `main`, weekly | Planned |
-| `.github/workflows/scorecard.yml` | OpenSSF Scorecard on `main` + schedule | Implemented |
+| `.github/workflows/scorecard.yml` | OpenSSF Scorecard weekly + `workflow_dispatch` (+ `branch_protection_rule`) | Implemented |
 | `.github/workflows/release-on-tag.yml` | Push `v*` → create GitHub Release | Implemented |
 | `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | Implemented |
-| `.github/dependabot.yml` | Weekly npm + Actions updates (grouped, no auto-merge) | Implemented |
+| `.github/dependabot.yml` | Weekly npm + Actions updates → PRs to `develop` (grouped, no auto-merge) | Implemented |
 | `.github/codeql/codeql-config.yml` | Ignore `dist/**`, `coverage/**` | Planned |
 | `codecov.yml` | Project/patch informational; no PR comment | Implemented |
 | `deploy-docs.yml` / `monitor-source-hash.yml` | — | Not adopted |
@@ -88,13 +90,14 @@ Do not open or update a PR while this gate is failing.
 | Parallelism | `Test` and `Build` after `Gate` |
 | Required check name | Aggregate job **`Test & Build`** |
 | Node | `24` (engines `>=24`), `npm ci`, pin Actions by SHA |
+| Cache | `actions/setup-node` with `cache: npm` on CI / Codecov / Publish |
 
 ### Codecov (main only)
 
 | Item | Rule |
 |------|------|
 | Trigger | `push` to `main` (merge into `main`) |
-| Not triggered | PR CI (`ci.yml`); push to other branches |
+| Not triggered | PR CI (`ci.yml`); push to other branches; docs/markdown-only paths (`paths-ignore`: `docs/**`, `**/*.md`, `LICENSE`, `.github/**/*.md`) |
 | Steps | `npm ci` → `npm test` → upload `coverage/lcov.info` |
 | Auth | Optional `CODECOV_TOKEN`; OIDC via `id-token: write` |
 | Status | Informational (`codecov.yml`); `fail_ci_if_error: false` |

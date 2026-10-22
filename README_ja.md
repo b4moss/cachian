@@ -13,7 +13,8 @@
 
 [`@b4moss/jp-local-gov-id`](https://github.com/b4moss/jp-local-gov-id) のキャッシュロジックを外出し・汎用化したものです。
 
-CI/CD: [docs/ci-cd.ja.md](./docs/ci-cd.ja.md)
+Docs hub: [docs/README.md](./docs/README.md) · OKF 索引: [docs/index.md](./docs/index.md)  
+CI/CD: [docs/specs/ops/ci-cd.ja.md](./docs/specs/ops/ci-cd.ja.md)
 
 ## インストール
 
@@ -109,6 +110,22 @@ await cache.purge({ expired: true });
 
 - 公開 `clear()` MethodDef / `@b4moss/cachian/methods/clear` を廃止 — 全削除は `purge({ all: true })`
 - `remove(key)` は **単一キーのみ**削除。複数キー削除は `purge({ keys })`
+
+移行例:
+
+```ts
+// 以前（v0.5 以前）— 全削除
+await cache.clear();
+
+// 以後（v0.6）— 全削除
+await cache.purge({ all: true });
+
+// 単一キー
+await cache.remove("a");
+
+// 複数キー
+await cache.purge({ keys: ["a", "b"] });
+```
 
 ## 破壊的変更（v0.4）
 

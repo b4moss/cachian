@@ -11,8 +11,8 @@
 | ローカルゲート | `npm run ci:local`（`act`） | 同じ |
 | カバレッジ | Codecov（informational） | 同じ |
 | SAST | CodeQL（非ブロッキング） | 同じ |
-| サプライチェーン | OpenSSF Scorecard（`main`） | 同じ |
-| Dependabot | npm + github-actions（週次） | 同じ（ルートのみ。`/scripts` workspace なし） |
+| サプライチェーン | OpenSSF Scorecard（週次 + `workflow_dispatch`） | 同じ |
+| Dependabot | npm + github-actions（週次）→ `develop` | 同じ（ルートのみ。`/scripts` workspace なし） |
 | npm publish | `data-v*` / `app-v*` → Release → provenance | 単一タグ `v*` → Release → provenance |
 | ドキュメントサイト | `site-v*` → GitHub Pages | **対象外**（現状サイトなし） |
 | ソース監視 | 総務省 Excel ハッシュ cron | **対象外**（外部データなし） |
@@ -26,13 +26,15 @@ feature/* / cursor/*
   PR → develop / dev-*     ← CI（Gate → Test ‖ Build → "Test & Build"）
         │
         ▼
-      main                 ← Codecov アップロード・Scorecard・既定ブランチ・v* タグはここからのみ
+      main                 ← Codecov アップロード（docs 以外）・既定ブランチ・v* タグはここからのみ
 ```
 
 - 日常の統合先: `develop`（必要時は版付き `dev-*`）
 - リリース: `main` に取り込み、`main` 上で `vX.Y.Z`（または `vX.Y.Z-rc.N`）をタグ付け
 - `main` 向け PR では CI に依存しない（安定ブランチ向けの参考リポジトリと同じ扱い）
-- Codecov は **`main` への push（= `main` へのマージ後）のみ**。PR CI ではアップロードしない
+- Codecov は **`main` への push（= `main` へのマージ後）のみ**。PR CI ではアップロードしない。docs / markdown のみの push は無視する
+- OpenSSF Scorecard は週次スケジュールと `workflow_dispatch`（`main` への毎回 push では走らない）
+- Dependabot の更新 PR は **`develop`** 向け（`ci.yml` が人間の PR と同じ base で発火する）
 
 ## ローカルゲート（PR 前必須）
 
@@ -46,7 +48,7 @@ npm run ci:local
 act pull_request -W .github/workflows/ci.yml
 ```
 
-既定は [`.actrc`](../.actrc)。`act` 実行時はゲートが Test/Build を必ず実行します（`ACT=true`）。Codecov は `main` 専用の別ワークフローであり、ローカル `act` の対象外です。
+既定は [`.actrc`](../../../.actrc)。`act` 実行時はゲートが Test/Build を必ず実行します（`ACT=true`）。Codecov は `main` 専用の別ワークフローであり、ローカル `act` の対象外です。
 
 Docker が無い環境（一部の Cloud Agent など）:
 
@@ -67,12 +69,12 @@ npm run ci:local:fallback   # npm ci && npm test && npm run build
 | ファイル | 役割 | 状態 |
 |----------|------|------|
 | `.github/workflows/ci.yml` | PR CI: Gate → Test ‖ Build → 集約 **Test & Build**（Codecov アップロードなし） | 実装済み |
-| `.github/workflows/codecov.yml` | `main` への push → test + `coverage/lcov.info` を Codecov へアップロード | 実装済み |
+| `.github/workflows/codecov.yml` | `main` への push（docs 以外）→ test + `coverage/lcov.info` を Codecov へアップロード | 実装済み |
 | `.github/workflows/codeql.yml` | CodeQL（`develop`/`dev-*` PR、`main` push、週次） | 予定 |
-| `.github/workflows/scorecard.yml` | OpenSSF Scorecard（`main` + schedule） | 実装済み |
+| `.github/workflows/scorecard.yml` | OpenSSF Scorecard（週次 + `workflow_dispatch`、+ `branch_protection_rule`） | 実装済み |
 | `.github/workflows/release-on-tag.yml` | `v*` push → GitHub Release 作成 | 実装済み |
 | `.github/workflows/publish.yml` | Release published → npm pack + provenance publish | 実装済み |
-| `.github/dependabot.yml` | 週次 npm + Actions（グループ化、自動マージなし） | 実装済み |
+| `.github/dependabot.yml` | 週次 npm + Actions → PR base は `develop`（グループ化、自動マージなし） | 実装済み |
 | `.github/codeql/codeql-config.yml` | `dist/**`・`coverage/**` を除外 | 予定 |
 | `codecov.yml` | project/patch は informational、PR コメントなし | 実装済み |
 | `deploy-docs.yml` / `monitor-source-hash.yml` | — | 採用しない |
@@ -88,13 +90,14 @@ npm run ci:local:fallback   # npm ci && npm test && npm run build
 | 並行 | `Gate` の後に `Test` と `Build` を並行 |
 | required check 名 | 集約ジョブ **`Test & Build`** |
 | Node | `24`（engines `>=24`）、`npm ci`、Actions は SHA ピン |
+| キャッシュ | CI / Codecov / Publish で `actions/setup-node` の `cache: npm` |
 
 ### Codecov（main のみ）
 
 | 項目 | ルール |
 |------|--------|
 | トリガ | `main` への `push`（`main` へのマージ） |
-| 発火しない例 | PR CI（`ci.yml`）、他ブランチへの push |
+| 発火しない例 | PR CI（`ci.yml`）、他ブランチへの push、docs / markdown のみ（`paths-ignore`: `docs/**`・`**/*.md`・`LICENSE`・`.github/**/*.md`） |
 | 手順 | `npm ci` → `npm test` → `coverage/lcov.info` をアップロード |
 | 認証 | 任意の `CODECOV_TOKEN`、`id-token: write` による OIDC |
 | ステータス | informational（`codecov.yml`）、`fail_ci_if_error: false` |
