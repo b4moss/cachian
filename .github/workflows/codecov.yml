@@ -6,6 +6,12 @@ on:
   push:
     branches:
       - main
+    # Docs / markdown-only pushes should not burn CI minutes or Codecov uploads.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".github/**/*.md"
 
 concurrency:
   group: codecov-${{ github.workflow }}-${{ github.ref }}
