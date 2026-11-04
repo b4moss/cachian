@@ -28,7 +28,7 @@ OKF の版索引は [`index.md`](./index.md)（`okf_version` のみ）。
 - IIFE は `src/cdn.ts` → `dist/cachian.iife(.min).js`（グローバル `Cachian`）
 - `sideEffects: false`、ランタイム依存ゼロ
 - CI/CD 契約: [`specs/ops/ci-cd.md`](./specs/ops/ci-cd.md)（日本語: [`ci-cd.ja.md`](./specs/ops/ci-cd.ja.md)）
-- 開発ルール: [`charter/`](./charter/)（OKF v0.1: [`charter/okf/`](./charter/okf/)）
+- 開発ルール: [`charter/`](https://github.com/b4moss/charter/tree/v1/docs/charter)（OKF v0.1: [`charter/okf/`](https://github.com/b4moss/charter/blob/v1/docs/charter/doc-rule.md)）
 
 現行機能の仕様正本は `docs/specs/`（ドメイン: `core` / `drivers` / `methods` / `ops`）。  
 受け入れケースは `docs/tests/`（同じドメイン切り）。
@@ -40,6 +40,6 @@ OKF の版索引は [`index.md`](./index.md)（`okf_version` のみ）。
 - [plans](./plans/) — これからやる内容
 - [specs](./specs/) — 現行仕様
 - [tests](./tests/) — テスト仕様
-- [憲章](./charter/) — 開発ルール
+- [憲章](https://github.com/b4moss/charter/tree/v1/docs/charter) — 開発ルール
 - [override-charter](./override-charter.md) — 憲章オーバーライド
 - ルート [README](../README.md) / [README (ja)](../README_ja.md)
